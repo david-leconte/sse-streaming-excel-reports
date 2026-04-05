@@ -1,0 +1,10 @@
+name: wikimedia_recentchanges_excel_dashboard
+
+config-version: 2
+
+profile: default
+
+models:
+  wikimedia_recentchanges_excel_dashboard:
+    silver:
+       +schema: silver

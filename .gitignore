@@ -1,0 +1,13 @@
+# dbt
+.dbt
+!.dbt/profiles.yml
+logs
+target
+
+# dlt
+.dlt
+!.dlt/config.toml
+
+# Downloaded data
+data
+

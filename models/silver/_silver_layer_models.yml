@@ -1,0 +1,9 @@
+sources:
+  - name: bronze
+    tables:
+      - name: recentchange
+
+models:
+  - name: test_silver
+    config:
+      materialized: incremental
