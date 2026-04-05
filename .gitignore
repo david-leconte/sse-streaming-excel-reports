@@ -1,11 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
 # dbt
-.dbt
+.dbt/*
 !.dbt/profiles.yml
 logs
 target
 
 # dlt
-.dlt
+.dlt/*
 !.dlt/config.toml
 
 # Downloaded data

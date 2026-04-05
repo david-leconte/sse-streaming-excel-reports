@@ -1,0 +1,12 @@
+[app]
+user_agent = "TEST"
+base_dir = ""
+topic_new_queue_file_seconds_threshold = 2
+load_and_transform_every_seconds = 15
+
+[sse_api]
+base_url = "https://stream.wikimedia.org/"
+
+[sse_api.topics.recentchange]
+path = "/v2/stream/recentchange"
+primary_key = ["id"]

@@ -1,0 +1,5 @@
+[sources.filesystem]
+file_glob="*.bin"
+
+[destination.duckdb]
+credentials="data/warehouse.db"
