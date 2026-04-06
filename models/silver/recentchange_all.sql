@@ -1,0 +1,35 @@
+SELECT
+	* EXCLUDE(
+		"_schema", 
+		title_url,
+		timestamp,
+        parsedcomment,
+		notify_url, 
+		server_url, 
+		server_name,
+		wiki,
+		server_script_path,
+		meta__request_id,
+		meta__id,
+		meta__stream,
+		meta__topic,
+		meta__partition,
+		meta__offset,
+		log_id,
+        log_action_comment,
+		log_params__type,
+		log_params__duration__v_text,
+		log_params__block_id,
+		log_params__img_sha1,
+		log_params__rev_id,
+		log_params__userid,
+		log_params__count__revisions,
+		log_params__revision,
+		log_params__changed,
+		log_params__mergerevid,
+		log_params__src,
+		_dlt_load_id,
+		_dlt_id
+	)
+FROM
+	{{ source('bronze', 'recentchange') }}
