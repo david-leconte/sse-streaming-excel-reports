@@ -7,15 +7,15 @@ models:
   - name: recentchange_all
     config:
       materialized: view
-  - name: recentchange_new
-    config:
-      materialized: incremental
-  - name: recentchange_edit
-    config:
-      materialized: incremental
-  - name: recentchange_categorize
-    config:
-      materialized: incremental
-  - name: recentchange_log
-    config:
-      materialized: incremental
+  # - name: recentchange_new
+  #   config:
+  #     materialized: incremental
+  # - name: recentchange_edit
+  #   config:
+  #     materialized: incremental
+  # - name: recentchange_categorize
+  #   config:
+  #     materialized: incremental
+  # - name: recentchange_log
+  #   config:
+  #     materialized: incremental

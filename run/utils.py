@@ -2,7 +2,6 @@ from typing import Iterable
 from pathlib import Path
 import tomllib
 
-
 def create_local_layers_dirs(base_dir: str) -> Path:
     data_path = Path(base_dir) / "data"
     data_path.mkdir(exist_ok=True)

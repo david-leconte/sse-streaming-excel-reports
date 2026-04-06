@@ -1,43 +1,121 @@
-from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 import json
 from json.decoder import JSONDecodeError
-from threading import Event
+import time
 
 import sseclient
-import dlt
-from dlt.sources.filesystem import filesystem
-from dlt.pipeline.pipeline import Pipeline
-from dlt.extract.resource import DltResource
-from dlt.common.storages.fsspec_filesystem import FileItemDict
+import pandas as pd
+import duckdb
 from dbt.cli.main import dbtRunner
 
 from run.utils import config
 
 
-@dataclass
 class WarehouseTransformer:
-    sse_topics_metadata: dict[str, dict[str, str]]
-    local_queues_base_paths: dict[str, Path]
-    warehouse_path: Path
+    def __init__(
+        self,
+        sse_topics_metadata: dict[str, dict[str, str]],
+        local_queues_base_paths: dict[str, Path],
+        warehouse_path: Path,
+    ):
+        self._sse_topics_metadata = sse_topics_metadata
+        self._local_queues_base_paths = local_queues_base_paths
+        self._warehouse_path = warehouse_path
 
-    @staticmethod
-    @dlt.transformer(write_disposition="append")
-    def read_binary_topics(
-        event_files: list[FileItemDict],
-        topic: str,  # pylint : disable=unused-argument
-        primary_key: Iterable[str],
-    ) -> list[dict]:
-        records_list: list[dict] = []
+        self._duckdb_conn = duckdb.connect(str(self._warehouse_path))
+        self._dbt = dbtRunner()
 
-        seen_records = 0
-        seen_missing_primary_key_records = 0
-        seen_incomplete_records = 0
+        self._topics_bronze_table_exist: dict[str, bool] = (
+            self._check_topics_bronze_table_exist()
+        )
 
-        for event_file_dict in event_files:
-            with event_file_dict.open("rb") as event_file:
+        self._topics_complete_files_lists: dict[str, list[Path]] = (
+            self._get_complete_files_per_topic()
+        )
+
+        self._topics_new_files_lists: dict[str, list[Path]] = (
+            self._get_new_files_per_topic()
+        )
+
+    def _check_topics_bronze_table_exist(self) -> dict[str, bool]:
+        topics_bronze_table_exist = dict()
+
+        for topic, _ in self._sse_topics_metadata.items():
+            information_schema_table_record = self._duckdb_conn.sql(
+                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'bronze' AND table_name = '{topic}'"
+            ).fetchone()
+
+            topics_bronze_table_exist[topic] = (
+                information_schema_table_record is not None
+                and information_schema_table_record[0] > 0
+            )
+
+        return topics_bronze_table_exist
+
+    def _get_complete_files_per_topic(self) -> dict[str, list[Path]]:
+        complete_files_list_per_topic = dict()
+
+        for topic, _ in self._sse_topics_metadata.items():
+            topic_path = Path(config["app"]["base_dir"]) / "data" / "queues" / topic
+            complete_files_list: list[Path] = sorted(
+                list(topic_path.glob("*.bin")), key=lambda path: path.name
+            )
+            complete_files_list_per_topic[topic] = complete_files_list
+
+        return complete_files_list_per_topic
+
+    def _get_new_files_per_topic(self):
+        new_files_list_per_topic = dict()
+
+        for topic, _ in self._sse_topics_metadata.items():
+            queues_path = Path(config["app"]["base_dir"]) / "data/queues"
+            newest_file_loaded_log_path = (
+                queues_path / f"{topic}_newest_file_loaded_log.txt"
+            )
+
+            if not newest_file_loaded_log_path.exists():
+                new_files_list_per_topic[topic] = self._topics_complete_files_lists[
+                    topic
+                ]
+                continue
+
+            if not topic in new_files_list_per_topic:
+                new_files_list_per_topic[topic] = []
+
+            with open(
+                str(newest_file_loaded_log_path), "r", encoding="utf-8"
+            ) as newest_file_loaded_log_file:
+                newest_file_loaded_path = (
+                    Path(config["app"]["base_dir"])
+                    / "data/queues"
+                    / topic
+                    / newest_file_loaded_log_file.read()
+                )
+
+            for current_file_path in self._topics_complete_files_lists[topic]:
+                if current_file_path > newest_file_loaded_path:
+                    new_files_list_per_topic[topic].append(current_file_path)
+
+        return new_files_list_per_topic
+
+    def _load_topic(
+        self,
+        topic: str,
+    ):
+        primary_key = self._sse_topics_metadata[topic]["primary_key"]
+
+        events_dicts: list[dict[str, Any]] = []
+
+        seen_dicts = 0
+        seen_missing_primary_key_dicts = 0
+        seen_incomplete_dicts = 0
+
+        if not self._topics_new_files_lists[topic]:
+            return
+
+        for event_file_path in self._topics_new_files_lists[topic]:
+            with open(event_file_path, "rb") as event_file:
                 events = sseclient.SSEClient(event_file).events()
 
                 while True:
@@ -45,14 +123,14 @@ class WarehouseTransformer:
                         event = next(events)
                     except UnicodeDecodeError as error:
                         print(
-                            f"ERROR: Decoding UTF-8 failed with file {event_file_dict["relative_path"]}"
+                            f"ERROR: Decoding UTF-8 failed on topic {topic } with file {event_file_path.name}"
                         )
                         print(error)
                         continue
                     except StopIteration:
                         break
 
-                    seen_records += 1
+                    seen_dicts += 1
 
                     try:
                         event_data = json.loads(event.data)
@@ -61,62 +139,66 @@ class WarehouseTransformer:
                         for primary_key_part in primary_key:
                             if not primary_key_part in event_data:
                                 event_primary_key_missing = True
-                                seen_missing_primary_key_records += 1
+                                seen_missing_primary_key_dicts += 1
 
                                 continue
 
                         if not event_primary_key_missing:
-                            records_list.append(event_data)
+                            events_dicts.append(event_data)
 
                     except JSONDecodeError:
-                        seen_incomplete_records += 1
+                        seen_incomplete_dicts += 1
 
-        print(
-            f"WARNING: Out of {seen_records} total records, \n\t{seen_missing_primary_key_records} marked as missing primary key,\n\t{seen_incomplete_records} marked as incomplete."
-        )
+            queues_path = Path(config["app"]["base_dir"]) / "data/queues"
+            newest_file_loaded_log_path = (
+                queues_path / f"{topic}_newest_file_loaded_log.txt"
+            )
 
-        return records_list
+            with open(
+                str(newest_file_loaded_log_path),
+                "w",
+                encoding="utf-8",
+            ) as newest_file_loaded_log_file:
+                newest_file_loaded_log_file.write(event_file_path.name)
 
-    @cached_property
-    def filesystem_resources(self) -> dict[str, DltResource]:
-        filesystem_resources: dict[str, DltResource] = dict()
+        # print(
+        #     f"WARNING: Out of {seen_dicts} total records, \n\t{seen_missing_primary_key_dicts} marked as missing primary key,\n\t{seen_incomplete_dicts} marked as incomplete."
+        # )
 
-        for topic, _ in self.local_queues_base_paths.items():
-            filesystem_resources[topic] = (
-                filesystem(
-                    bucket_url=str(self.local_queues_base_paths[topic]),
-                    incremental=dlt.sources.incremental("modification_date"),
-                    file_glob="*.bin",
-                )
-                | WarehouseTransformer.read_binary_topics(
-                    topic, self.sse_topics_metadata[topic]["primary_key"]
-                )  # pylint: disable=unsupported-binary-operation
-            ).apply_hints(merge_key=self.sse_topics_metadata[topic]["primary_key"])
+        events_df = pd.DataFrame(events_dicts)  # pylint : ignore=unused-variable
 
-        return filesystem_resources
+        if not self._topics_bronze_table_exist[topic]:
+            self._duckdb_conn.sql(
+                f"""CREATE SCHEMA IF NOT EXISTS bronze;
+                CREATE TABLE IF NOT EXISTS bronze.{topic} AS SELECT * FROM events_df;"""
+            )
 
-    @cached_property
-    def load_pipeline(self) -> Pipeline:
-        pipeline = dlt.pipeline(
-            pipeline_name="bronze_stream",
-            pipelines_dir=".dlt",
-            destination=dlt.destinations.duckdb(str(self.warehouse_path)),
-            dataset_name="bronze",
-        )
-
-        return pipeline
-
-    @cached_property
-    def dbt(self) -> dbtRunner:
-        return dbtRunner()
+        else:
+            self._duckdb_conn.sql(
+                f"INSERT INTO bronze.{topic} SELECT * FROM events_df;"
+            )
 
     def load_and_transform_once(self):
-        for topic, filesystem_resource in self.filesystem_resources.items():
-            self.load_pipeline.run(filesystem_resource, table_name=topic)
+        for topic in self._sse_topics_metadata.keys():
+            self._load_topic(topic)
 
-        self.dbt.invoke([])
+        self._dbt.invoke(
+            ["run", "--profiles-dir", config["app"]["dbt_profile_dir"], "--quiet"]
+        )
 
-    def load_and_transform_continuously(self, thread_stop_event: Event):
-        while not thread_stop_event.is_set():
+    def load_and_transform_continuously(self):
+        while True:
             self.load_and_transform_once()
-            thread_stop_event.wait(config["app"]["load_and_transform_every_seconds"])
+
+            time.sleep(config["app"]["load_and_transform_every_seconds"])
+
+    @staticmethod
+    def build_and_run_continuously_warehouse_transformer(
+        sse_topics_metadata: dict[str, dict[str, str]],
+        local_queues_base_paths: dict[str, Path],
+        warehouse_path: Path,
+    ):
+        warehouse_transformer = WarehouseTransformer(
+            sse_topics_metadata, local_queues_base_paths, warehouse_path
+        )
+        warehouse_transformer.load_and_transform_continuously()
