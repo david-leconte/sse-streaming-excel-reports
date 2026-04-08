@@ -5,17 +5,17 @@ from json.decoder import JSONDecodeError
 import time
 
 import sseclient
-import pandas as pd
+import pyarrow as pa
 import duckdb
 from dbt.cli.main import dbtRunner
 
-from run.utils import run_config
+from run.utils import run_config, get_pyarrow_schema_from_dict
 
 
 class WarehouseTransformer:
     def __init__(
         self,
-        sse_topics_metadata: dict[str, dict[str, str]],
+        sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
         local_queues_base_paths: dict[str, Path],
         warehouse_path: Path,
     ):
@@ -25,6 +25,12 @@ class WarehouseTransformer:
 
         self._duckdb_conn = duckdb.connect(str(self._warehouse_path))
         self._dbt = dbtRunner()
+
+        self._topics_schemas: dict[str, pa.Schema] = {}
+
+        for topic, metadata in self._sse_topics_metadata.items():
+            assert type(metadata["schema"]) == dict
+            self._topics_schemas[topic] = get_pyarrow_schema_from_dict(metadata["schema"])
 
         self._topics_bronze_table_exist: dict[str, bool] = (
             self._check_topics_bronze_table_exist()
@@ -103,6 +109,7 @@ class WarehouseTransformer:
         topic: str,
     ):
         primary_key = self._sse_topics_metadata[topic]["primary_key"]
+        topic_arrow_schema = self._topics_schemas[topic]
 
         events_dicts: list[dict[str, Any]] = []
 
@@ -164,17 +171,20 @@ class WarehouseTransformer:
         #     f"WARNING: Out of {seen_dicts} total records, \n\t{seen_missing_primary_key_dicts} marked as missing primary key,\n\t{seen_incomplete_dicts} marked as incomplete."
         # )
 
-        events_df = pd.DataFrame(events_dicts)  # pylint : ignore=unused-variable
+        events_arrow_table = pa.Table.from_pylist(events_dicts, schema=topic_arrow_schema)
+        duckdb.register("events_arrow", events_arrow_table)
 
         if not self._topics_bronze_table_exist[topic]:
             self._duckdb_conn.sql(
                 f"""CREATE SCHEMA IF NOT EXISTS bronze;
-                CREATE TABLE IF NOT EXISTS bronze.{topic} AS SELECT * FROM events_df;"""
+                CREATE TABLE IF NOT EXISTS bronze.{topic} AS SELECT * FROM events_arrow;"""
             )
+
+            self._topics_bronze_table_exist[topic] = True
 
         else:
             self._duckdb_conn.sql(
-                f"INSERT INTO bronze.{topic} SELECT * FROM events_df;"
+                f"INSERT INTO bronze.{topic} SELECT * FROM events_arrow;"
             )
 
     def load_and_transform_once(self):
@@ -193,7 +203,7 @@ class WarehouseTransformer:
 
     @staticmethod
     def build_and_run_continuously_warehouse_transformer(
-        sse_topics_metadata: dict[str, dict[str, str]],
+        sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
         local_queues_base_paths: dict[str, Path],
         warehouse_path: Path,
     ):
