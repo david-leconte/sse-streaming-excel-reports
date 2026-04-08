@@ -12,9 +12,9 @@ SELECT
 	user,
 	bot,
 	minor,
-	meta__uri,
-	meta__domain,
-	meta__dt,
+	uri,
+	domain,
+	dt
 FROM
 	{{ ref('recentchange_all') }}
 WHERE

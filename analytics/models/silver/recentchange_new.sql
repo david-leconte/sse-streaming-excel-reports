@@ -6,10 +6,10 @@ SELECT
 	user,
 	bot,
 	minor,
-	length__new,
-	meta__uri,
-	meta__domain,
-	meta__dt,
+	length_new as length,
+	uri,
+	domain,
+	dt,
 	patrolled
 FROM
 	{{ ref('recentchange_all') }}

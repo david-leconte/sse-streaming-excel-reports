@@ -40,5 +40,8 @@ if __name__ == "__main__":
     topics_writer_process.start()
     warehouse_transformer_process.start()
 
-    while topics_writer_process.is_alive() and warehouse_transformer_process.is_alive():
-        pass
+    try:
+        while topics_writer_process.is_alive() and warehouse_transformer_process.is_alive():
+            pass
+    except KeyboardInterrupt:
+        exit()

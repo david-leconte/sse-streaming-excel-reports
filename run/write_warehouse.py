@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any
 import json
 from json.decoder import JSONDecodeError
 import time
@@ -7,9 +6,9 @@ import time
 import sseclient
 import pyarrow as pa
 import duckdb
-from dbt.cli.main import dbtRunner
+from dbt.cli.main import dbtRunner, dbtRunnerResult
 
-from run.utils import run_config, get_pyarrow_schema_from_dict
+from run.utils import run_config
 
 
 class WarehouseTransformer:
@@ -26,22 +25,8 @@ class WarehouseTransformer:
         self._duckdb_conn = duckdb.connect(str(self._warehouse_path))
         self._dbt = dbtRunner()
 
-        self._topics_schemas: dict[str, pa.Schema] = {}
-
-        for topic, metadata in self._sse_topics_metadata.items():
-            assert type(metadata["schema"]) == dict
-            self._topics_schemas[topic] = get_pyarrow_schema_from_dict(metadata["schema"])
-
         self._topics_bronze_table_exist: dict[str, bool] = (
             self._check_topics_bronze_table_exist()
-        )
-
-        self._topics_complete_files_lists: dict[str, list[Path]] = (
-            self._get_complete_files_per_topic()
-        )
-
-        self._topics_new_files_lists: dict[str, list[Path]] = (
-            self._get_new_files_per_topic()
         )
 
     def _check_topics_bronze_table_exist(self) -> dict[str, bool]:
@@ -71,7 +56,10 @@ class WarehouseTransformer:
 
         return complete_files_list_per_topic
 
-    def _get_new_files_per_topic(self):
+    @property
+    def _topics_new_files_lists(self) -> dict[str, list[Path]]:
+        topics_complete_files_lists = self._get_complete_files_per_topic()
+
         new_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
@@ -81,7 +69,7 @@ class WarehouseTransformer:
             )
 
             if not newest_file_loaded_log_path.exists():
-                new_files_list_per_topic[topic] = self._topics_complete_files_lists[
+                new_files_list_per_topic[topic] = topics_complete_files_lists[
                     topic
                 ]
                 continue
@@ -93,12 +81,10 @@ class WarehouseTransformer:
                 str(newest_file_loaded_log_path), "r", encoding="utf-8"
             ) as newest_file_loaded_log_file:
                 newest_file_loaded_path = (
-                    Path("data/queues")
-                    / topic
-                    / newest_file_loaded_log_file.read()
+                    Path("data/queues") / topic / newest_file_loaded_log_file.read()
                 )
 
-            for current_file_path in self._topics_complete_files_lists[topic]:
+            for current_file_path in topics_complete_files_lists[topic]:
                 if current_file_path > newest_file_loaded_path:
                     new_files_list_per_topic[topic].append(current_file_path)
 
@@ -107,18 +93,17 @@ class WarehouseTransformer:
     def _load_topic(
         self,
         topic: str,
-    ):
+    ) -> int:
         primary_key = self._sse_topics_metadata[topic]["primary_key"]
-        topic_arrow_schema = self._topics_schemas[topic]
 
-        events_dicts: list[dict[str, Any]] = []
+        events_data_str_list: list[str] = []
 
         seen_dicts = 0
         seen_missing_primary_key_dicts = 0
         seen_incomplete_dicts = 0
 
         if not self._topics_new_files_lists[topic]:
-            return
+            return 0
 
         for event_file_path in self._topics_new_files_lists[topic]:
             with open(event_file_path, "rb") as event_file:
@@ -139,18 +124,18 @@ class WarehouseTransformer:
                     seen_dicts += 1
 
                     try:
-                        event_data = json.loads(event.data)
+                        event_data_dict = json.loads(event.data)
                         event_primary_key_missing = False
 
                         for primary_key_part in primary_key:
-                            if not primary_key_part in event_data:
+                            if not primary_key_part in event_data_dict:
                                 event_primary_key_missing = True
                                 seen_missing_primary_key_dicts += 1
 
                                 continue
 
                         if not event_primary_key_missing:
-                            events_dicts.append(event_data)
+                            events_data_str_list.append(event.data)
 
                     except JSONDecodeError:
                         seen_incomplete_dicts += 1
@@ -167,33 +152,46 @@ class WarehouseTransformer:
             ) as newest_file_loaded_log_file:
                 newest_file_loaded_log_file.write(event_file_path.name)
 
-        # print(
-        #     f"WARNING: Out of {seen_dicts} total records, \n\t{seen_missing_primary_key_dicts} marked as missing primary key,\n\t{seen_incomplete_dicts} marked as incomplete."
-        # )
+        print(
+            f"LOG: Out of {seen_dicts} total records, \n\t{seen_missing_primary_key_dicts} marked as missing primary key,\n\t{seen_incomplete_dicts} marked as incomplete."
+        )
 
-        events_arrow_table = pa.Table.from_pylist(events_dicts, schema=topic_arrow_schema)
-        duckdb.register("events_arrow", events_arrow_table)
+        events_arrow_array = pa.array(events_data_str_list, type=pa.json_(pa.utf8()))
+        events_arrow_table = pa.table({"event": events_arrow_array})
+        self._duckdb_conn.register("events_arrow", events_arrow_table)
 
         if not self._topics_bronze_table_exist[topic]:
             self._duckdb_conn.sql(
                 f"""CREATE SCHEMA IF NOT EXISTS bronze;
-                CREATE TABLE IF NOT EXISTS bronze.{topic} AS SELECT * FROM events_arrow;"""
+                CREATE TABLE IF NOT EXISTS bronze.{topic} (event JSON);"""
             )
 
             self._topics_bronze_table_exist[topic] = True
 
-        else:
-            self._duckdb_conn.sql(
-                f"INSERT INTO bronze.{topic} SELECT * FROM events_arrow;"
-            )
+        self._duckdb_conn.sql(f"INSERT INTO bronze.{topic} SELECT * FROM events_arrow;")
+
+        return seen_dicts
 
     def load_and_transform_once(self):
-        for topic in self._sse_topics_metadata.keys():
-            self._load_topic(topic)
+        total_records_loaded = 0
 
-        self._dbt.invoke(
+        for topic in self._sse_topics_metadata.keys():
+            seen_records = self._load_topic(topic)
+            total_records_loaded += seen_records
+
+        if seen_records < 1:
+            return
+
+        dbt_result: dbtRunnerResult = self._dbt.invoke(
             ["run", "--profiles-dir", run_config["dbt_profile_dir"], "--quiet"]
         )
+
+        print(
+            f"LOG: {total_records_loaded} records loaded and transformed with dbt models."
+        )
+
+        if not dbt_result.success:
+            raise RuntimeError()
 
     def load_and_transform_continuously(self):
         while True:

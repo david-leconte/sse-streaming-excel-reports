@@ -1,4 +1,4 @@
 user_agent = "TEST"
 dbt_profile_dir=".dbt"
-topic_new_queue_file_seconds_threshold = 2
-load_and_transform_every_seconds = 15
+topic_new_queue_file_seconds_threshold = 60
+load_and_transform_every_seconds = 60

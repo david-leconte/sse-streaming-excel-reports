@@ -6,11 +6,11 @@ SELECT
 	user,
 	bot,
 	minor,
-	(revision__new - revision__old) AS revision__global_offset,
-	(length__new - length__old) AS length__difference,
-	meta__uri,
-	meta__domain,
-	meta__dt,
+	(revision_new - revision_old) AS revision_global_offset,
+	(length_new - length_old) AS length_difference,
+	uri,
+	domain,
+	dt,
 	patrolled
 FROM
 	{{ ref('recentchange_all') }}
