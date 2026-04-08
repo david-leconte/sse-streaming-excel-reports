@@ -2,8 +2,8 @@ from typing import Iterable
 from pathlib import Path
 import tomllib
 
-def create_local_layers_dirs(base_dir: str) -> Path:
-    data_path = Path(base_dir) / "data"
+def create_local_layers_dirs() -> Path:
+    data_path = Path("data")
     data_path.mkdir(exist_ok=True)
 
     for layer in ["queues", "csv"]:
@@ -25,5 +25,8 @@ def create_local_queues_paths(
     return all_queues_basepaths
 
 
-with open("config.toml", "rb") as f:
-    config = tomllib.load(f)
+with open("run/config.toml", "rb") as f:
+    run_config = tomllib.load(f)
+
+with open("analytics/topics.toml", "rb") as f:
+    topics_config = tomllib.load(f)

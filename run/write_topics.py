@@ -9,7 +9,7 @@ import aiofiles
 import aiohttp
 from aiohttp.client_exceptions import ClientPayloadError
 
-from run.utils import config
+from run.utils import run_config
 
 class TopicQueuesAsyncWriter:
     @staticmethod
@@ -42,7 +42,7 @@ class TopicQueuesAsyncWriter:
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session, session.get(
                     base_url + "/" + sse_topics_metadata[topic]["path"],
-                    headers={"User-Agent": config["app"]["user_agent"]},
+                    headers={"User-Agent": run_config["user_agent"]},
                 ) as resp:
                     while True:
                         try:
@@ -58,9 +58,7 @@ class TopicQueuesAsyncWriter:
                                 await TopicQueuesAsyncWriter._get_new_topic_queue_file(topic, queues_base_paths)
                             )
 
-                        if (datetime.now() - last_queue_file_datetime).seconds > config[
-                            "app"
-                        ]["topic_new_queue_file_seconds_threshold"]:
+                        if (datetime.now() - last_queue_file_datetime).seconds > run_config["topic_new_queue_file_seconds_threshold"]:
                             await last_queue_file.close()
                             last_queue_file_datetime, last_queue_file = (
                                 await TopicQueuesAsyncWriter._get_new_topic_queue_file(topic, queues_base_paths)

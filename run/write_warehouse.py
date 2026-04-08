@@ -9,7 +9,7 @@ import pandas as pd
 import duckdb
 from dbt.cli.main import dbtRunner
 
-from run.utils import config
+from run.utils import run_config
 
 
 class WarehouseTransformer:
@@ -57,7 +57,7 @@ class WarehouseTransformer:
         complete_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
-            topic_path = Path(config["app"]["base_dir"]) / "data" / "queues" / topic
+            topic_path = Path("data/queues") / topic
             complete_files_list: list[Path] = sorted(
                 list(topic_path.glob("*.bin")), key=lambda path: path.name
             )
@@ -69,7 +69,7 @@ class WarehouseTransformer:
         new_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
-            queues_path = Path(config["app"]["base_dir"]) / "data/queues"
+            queues_path = Path("data/queues")
             newest_file_loaded_log_path = (
                 queues_path / f"{topic}_newest_file_loaded_log.txt"
             )
@@ -87,8 +87,7 @@ class WarehouseTransformer:
                 str(newest_file_loaded_log_path), "r", encoding="utf-8"
             ) as newest_file_loaded_log_file:
                 newest_file_loaded_path = (
-                    Path(config["app"]["base_dir"])
-                    / "data/queues"
+                    Path("data/queues")
                     / topic
                     / newest_file_loaded_log_file.read()
                 )
@@ -149,7 +148,7 @@ class WarehouseTransformer:
                     except JSONDecodeError:
                         seen_incomplete_dicts += 1
 
-            queues_path = Path(config["app"]["base_dir"]) / "data/queues"
+            queues_path = Path("data/queues")
             newest_file_loaded_log_path = (
                 queues_path / f"{topic}_newest_file_loaded_log.txt"
             )
@@ -183,14 +182,14 @@ class WarehouseTransformer:
             self._load_topic(topic)
 
         self._dbt.invoke(
-            ["run", "--profiles-dir", config["app"]["dbt_profile_dir"], "--quiet"]
+            ["run", "--profiles-dir", run_config["dbt_profile_dir"], "--quiet"]
         )
 
     def load_and_transform_continuously(self):
         while True:
             self.load_and_transform_once()
 
-            time.sleep(config["app"]["load_and_transform_every_seconds"])
+            time.sleep(run_config["load_and_transform_every_seconds"])
 
     @staticmethod
     def build_and_run_continuously_warehouse_transformer(

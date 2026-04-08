@@ -1,0 +1,6 @@
+[api]
+base_url = "https://stream.wikimedia.org/"
+
+[topics.recentchange]
+path = "/v2/stream/recentchange"
+primary_key = ["id"]
