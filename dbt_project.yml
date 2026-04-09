@@ -1,4 +1,4 @@
-name: wikimedia_streaming_excel_reports
+name: sse_streaming_excel_reports
 
 config-version: 2
 
@@ -7,6 +7,6 @@ profile: default
 model-paths: ["analytics/models"]
 
 models:
-  wikimedia_streaming_excel_reports:
+  sse_streaming_excel_reports:
     silver:
        +schema: silver
