@@ -1,8 +1,10 @@
 from multiprocessing import Process
-import os
+from pathlib import Path
 
 from src.utils import (
+    run_config,
     topics_config,
+    propagate_dbt_files_to_user_path,
     create_local_files_dirs,
     create_local_queues_paths,
 )
@@ -10,12 +12,13 @@ from src.write_topics import TopicQueuesAsyncWriter
 from src.write_warehouse import WarehouseTransformer
 
 if __name__ == "__main__":
-    os.makedirs("logs", exist_ok=True)
-
     sse_api_base_url: str = topics_config["api"]["base_url"]
     sse_topics_metadata: dict[str, dict[str, str]] = topics_config["topics"]
 
-    data_path = create_local_files_dirs()
+    user_project_path = Path(run_config["default_user_project_dir"])
+
+    propagate_dbt_files_to_user_path(user_project_path)
+    data_path = create_local_files_dirs(user_project_path)
     all_queues_basepaths = create_local_queues_paths(
         data_path / "queues", sse_topics_metadata.keys()
     )
@@ -25,6 +28,7 @@ if __name__ == "__main__":
         args=(
             sse_api_base_url,
             sse_topics_metadata,
+            user_project_path,
             all_queues_basepaths,
         ),
         daemon=True,
@@ -32,7 +36,7 @@ if __name__ == "__main__":
 
     warehouse_transformer_process = Process(
         target=WarehouseTransformer.build_and_run_continuously_warehouse_transformer,
-        args=(sse_topics_metadata, all_queues_basepaths, data_path / "warehouse"),
+        args=(sse_topics_metadata, user_project_path, all_queues_basepaths),
         daemon=True,
     )
 

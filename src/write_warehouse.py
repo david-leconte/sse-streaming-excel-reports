@@ -14,17 +14,15 @@ from src.utils import get_process_logger, run_config
 
 
 class WarehouseTransformer:
-    logger = get_process_logger(__name__)
-
     def __init__(
         self,
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
+        user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
-        warehouse_path: Path,
     ):
         self._sse_topics_metadata = sse_topics_metadata
+        self._user_project_path = user_project_path
         self._local_queues_base_paths = local_queues_base_paths
-        self._warehouse_path = warehouse_path
 
         self._duckdb_conn = self._attach_warehouse()
         self._dbt = dbtRunner()
@@ -33,13 +31,17 @@ class WarehouseTransformer:
             self._check_topics_bronze_table_exist()
         )
 
+        self._logger = get_process_logger(user_project_path, __name__)
+
     def _attach_warehouse(self) -> DuckDBPyConnection:
         duckdb_conn = duckdb.connect()
 
         warehouse_metadata_abs_path = (
-            self._warehouse_path / "warehouse.sqlite"
+            self._user_project_path / "data/warehouse/warehouse.sqlite"
         ).resolve()
-        warehouse_data_posix_abs_path = (self._warehouse_path / "data_files").resolve()
+        warehouse_data_abs_path = (
+            self._user_project_path / "data/warehouse/data_files"
+        ).resolve()
 
         duckdb_conn.execute(
             f"""
@@ -49,7 +51,7 @@ class WarehouseTransformer:
                 'ducklake:sqlite:{warehouse_metadata_abs_path}' 
                 AS warehouse 
                 (
-                    DATA_PATH '{warehouse_data_posix_abs_path}',
+                    DATA_PATH '{warehouse_data_abs_path}',
                     AUTOMATIC_MIGRATION true
                 );
             USE warehouse;
@@ -190,9 +192,9 @@ class WarehouseTransformer:
                 log_newest_file_loaded_file.write(event_file_path.name)
 
         log_func = (
-            WarehouseTransformer.logger.warning
+            self._logger.warning
             if seen_missing_primary_key_dicts > 0 or seen_incomplete_dicts > 0
-            else WarehouseTransformer.logger.info
+            else self._logger.info
         )
         log_func(
             "Out of %s total records, \n\t%s marked as missing primary key,\n\t%s marked as incomplete.",
@@ -231,13 +233,17 @@ class WarehouseTransformer:
         if seen_records < 1:
             return
 
+        dbt_compiled_abs_path = (
+            self._user_project_path / "dbt_compiled"
+        ).resolve()
+
         dbt_result: dbtRunnerResult = self._dbt.invoke(
             [
                 "run",
                 "--project-dir",
-                "config",
+                str(dbt_compiled_abs_path),
                 "--profiles-dir",
-                "config",
+                str(dbt_compiled_abs_path),
                 "--target-path",
                 "target",
                 "--log-path",
@@ -248,7 +254,7 @@ class WarehouseTransformer:
             ]
         )
 
-        WarehouseTransformer.logger.info(
+        self._logger.info(
             "%s records loaded and transformed with dbt models.", total_records_loaded
         )
 
@@ -277,16 +283,17 @@ class WarehouseTransformer:
     @staticmethod
     def build_and_run_continuously_warehouse_transformer(
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
+        user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
-        warehouse_path: Path,
     ):
         try:
             warehouse_transformer = WarehouseTransformer(
                 sse_topics_metadata,
+                user_project_path,
                 local_queues_base_paths,
-                warehouse_path,
             )
             warehouse_transformer.load_and_transform_continuously()
         except Exception as error:  # pylint: disable=broad-except
-            WarehouseTransformer.logger.exception(error)
+            logger = get_process_logger(user_project_path, __name__)
+            logger.exception(error)
             exit()

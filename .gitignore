@@ -3,12 +3,7 @@ __pycache__
 *.pyc
 .venv
 
-# dbt
-.dbt
-logs
-target
-config/.user.yml
-
-# Downloaded data
-run/data
-
+# Run data
+run/*
+!run/topics.toml
+!run/models

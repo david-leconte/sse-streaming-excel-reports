@@ -1,0 +1,16 @@
+name: sse_streaming_excel_reports
+
+config-version: 2
+
+profile: default
+
+macro-paths: ["../macros"]
+model-paths: ["../models"]
+
+models:
+  sse_streaming_excel_reports:
+    +database: warehouse
+    silver:
+      +schema: silver
+    gold:
+      +schema: gold

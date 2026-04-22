@@ -13,8 +13,6 @@ from src.utils import get_process_logger, run_config
 
 
 class TopicQueuesAsyncWriter:
-    logger = get_process_logger(__name__)
-
     @staticmethod
     async def _get_new_topic_queue_file(
         topic: str, local_queues_basepaths: dict[str, Path]
@@ -105,6 +103,7 @@ class TopicQueuesAsyncWriter:
     def build_and_run_topic_queues_writer(
         base_url: str,
         sse_topics_metadata: dict[str, dict[str, str]],
+        user_project_path: Path,
         queues_base_paths: dict[str, Path],
     ):
         try:
@@ -114,5 +113,6 @@ class TopicQueuesAsyncWriter:
                 )
             )
         except Exception as error:  # pylint: disable=broad-except
-            TopicQueuesAsyncWriter.logger.exception(error)
+            logger = get_process_logger(user_project_path, __name__)
+            logger.exception(error)
             exit()

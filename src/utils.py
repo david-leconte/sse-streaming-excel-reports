@@ -2,13 +2,21 @@ import logging
 from typing import Iterable
 from pathlib import Path
 import tomllib
+import os
+import shutil
+
+from jinja2 import Environment, FileSystemLoader
 
 
-def get_process_logger(name: str):
+def get_process_logger(user_project_path: Path, name: str):
+    os.makedirs(str(user_project_path / "logs"), exist_ok=True)
+
     formatter = logging.Formatter("%(asctime)s - %(levelname)s :\n%(message)s")
     filename = f"{name.translate(str.maketrans(".- ", "___")).lower()}.log"
 
-    file_handler = logging.FileHandler(f"logs/{filename}")
+    file_handler = logging.FileHandler(
+        filename=str(user_project_path / "logs" / filename), encoding="utf-8"
+    )
     file_handler.setFormatter(formatter)
 
     stream_handler = logging.StreamHandler()
@@ -25,8 +33,37 @@ def get_process_logger(name: str):
     return logger
 
 
-def create_local_files_dirs() -> Path:
-    data_path = Path("run/data")
+def propagate_dbt_files_to_user_path(user_project_path: Path):
+    jinja_env = Environment(loader=FileSystemLoader("dbt_configs_templates"))
+    dbt_project_template_file_name = "dbt_project.yml.j2"
+    dbt_profiles_template_file_name = "profiles.yml.j2"
+
+    dbt_compiled_files_path = user_project_path / "dbt_compiled"
+    dbt_compiled_files_path.mkdir(exist_ok=True)
+
+    dbt_project_template = jinja_env.get_template(dbt_project_template_file_name)
+    dbt_project_rendered = dbt_project_template.render()
+    with open(
+        str(dbt_compiled_files_path / "dbt_project.yml"), "w", encoding="utf-8"
+    ) as f:
+        f.write(dbt_project_rendered)
+
+    dbt_profiles_template = jinja_env.get_template(dbt_profiles_template_file_name)
+    dbt_profiles_rendered = dbt_profiles_template.render(
+        user_project_dir=user_project_path.resolve().as_posix()
+    )
+    with open(
+        str(dbt_compiled_files_path / "profiles.yml"), "w", encoding="utf-8"
+    ) as f:
+        f.write(dbt_profiles_rendered)
+
+    shutil.copytree(
+        "macros", str(user_project_path / "macros"), dirs_exist_ok=True
+    )
+
+
+def create_local_files_dirs(user_project_path: Path) -> Path:
+    data_path = user_project_path / "data"
     data_path.mkdir(exist_ok=True)
 
     for layer in ["queues", "warehouse", "csv"]:
@@ -48,7 +85,7 @@ def create_local_queues_paths(
     return all_queues_basepaths
 
 
-with open("config/app.toml", "rb") as f:
+with open("app_config.toml", "rb") as f:
     run_config = tomllib.load(f)
 
 with open("run/topics.toml", "rb") as f:
