@@ -1,17 +1,20 @@
 from typing import Tuple
 from pathlib import Path
 from datetime import datetime
-
 import asyncio
 from asyncio import IncompleteReadError
+
 from aiofiles.threadpool.binary import AsyncBufferedIOBase
 import aiofiles
 import aiohttp
 from aiohttp.client_exceptions import ClientPayloadError
 
-from run.utils import run_config
+from src.utils import get_process_logger, run_config
+
 
 class TopicQueuesAsyncWriter:
+    logger = get_process_logger(__name__)
+
     @staticmethod
     async def _get_new_topic_queue_file(
         topic: str, local_queues_basepaths: dict[str, Path]
@@ -24,7 +27,6 @@ class TopicQueuesAsyncWriter:
         topic_last_queue_fp = await aiofiles.open(topic_last_queue_full_path, "wb")
 
         return topic_last_queue_file_datetime, topic_last_queue_fp
-
 
     @staticmethod
     async def _write_topic_local_queue(
@@ -40,10 +42,13 @@ class TopicQueuesAsyncWriter:
 
         while True:
             try:
-                async with aiohttp.ClientSession(timeout=timeout) as session, session.get(
-                    base_url + "/" + sse_topics_metadata[topic]["path"],
-                    headers={"User-Agent": run_config["user_agent"]},
-                ) as resp:
+                async with (
+                    aiohttp.ClientSession(timeout=timeout) as session,
+                    session.get(
+                        base_url + "/" + sse_topics_metadata[topic]["path"],
+                        headers={"User-Agent": run_config["user_agent"]},
+                    ) as resp,
+                ):
                     while True:
                         try:
                             current_contents = await resp.content.readuntil(
@@ -55,13 +60,21 @@ class TopicQueuesAsyncWriter:
 
                         if not last_queue_file or not last_queue_file_datetime:
                             last_queue_file_datetime, last_queue_file = (
-                                await TopicQueuesAsyncWriter._get_new_topic_queue_file(topic, queues_base_paths)
+                                await TopicQueuesAsyncWriter._get_new_topic_queue_file(
+                                    topic, queues_base_paths
+                                )
                             )
 
-                        if (datetime.now() - last_queue_file_datetime).seconds > run_config["topic_new_queue_file_seconds_threshold"]:
+                        if (
+                            datetime.now() - last_queue_file_datetime
+                        ).seconds > run_config[
+                            "topic_new_queue_file_seconds_threshold"
+                        ]:
                             await last_queue_file.close()
                             last_queue_file_datetime, last_queue_file = (
-                                await TopicQueuesAsyncWriter._get_new_topic_queue_file(topic, queues_base_paths)
+                                await TopicQueuesAsyncWriter._get_new_topic_queue_file(
+                                    topic, queues_base_paths
+                                )
                             )
 
                         await last_queue_file.write(current_contents)
@@ -94,8 +107,12 @@ class TopicQueuesAsyncWriter:
         sse_topics_metadata: dict[str, dict[str, str]],
         queues_base_paths: dict[str, Path],
     ):
-        asyncio.run(
-            TopicQueuesAsyncWriter.write_all_topics_local_queues_async(
-                base_url, sse_topics_metadata, queues_base_paths
+        try:
+            asyncio.run(
+                TopicQueuesAsyncWriter.write_all_topics_local_queues_async(
+                    base_url, sse_topics_metadata, queues_base_paths
+                )
             )
-        )
+        except Exception as error:  # pylint: disable=broad-except
+            TopicQueuesAsyncWriter.logger.exception(error)
+            exit()

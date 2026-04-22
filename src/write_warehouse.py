@@ -10,10 +10,12 @@ from duckdb import DuckDBPyConnection
 from dbt.cli.main import dbtRunner, dbtRunnerResult
 from dbt.artifacts.schemas.run import RunExecutionResult
 
-from run.utils import run_config
+from src.utils import get_process_logger, run_config
 
 
 class WarehouseTransformer:
+    logger = get_process_logger(__name__)
+
     def __init__(
         self,
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
@@ -84,7 +86,7 @@ class WarehouseTransformer:
         complete_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
-            topic_path = Path("data/queues") / topic
+            topic_path = self._local_queues_base_paths[topic]
             complete_files_list: list[Path] = sorted(
                 list(topic_path.glob("*.bin")), key=lambda path: path.name
             )
@@ -99,12 +101,12 @@ class WarehouseTransformer:
         new_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
-            queues_path = Path("data/queues")
-            newest_file_loaded_log_path = (
-                queues_path / f"{topic}_newest_file_loaded_log.txt"
+            log_newest_file_loaded_path = (
+                self._local_queues_base_paths[topic].parent
+                / f"{topic}_newest_file_loaded_log.txt"
             )
 
-            if not newest_file_loaded_log_path.exists():
+            if not log_newest_file_loaded_path.exists():
                 new_files_list_per_topic[topic] = topics_complete_files_lists[topic]
                 continue
 
@@ -112,10 +114,11 @@ class WarehouseTransformer:
                 new_files_list_per_topic[topic] = []
 
             with open(
-                str(newest_file_loaded_log_path), "r", encoding="utf-8"
-            ) as newest_file_loaded_log_file:
+                str(log_newest_file_loaded_path), "r", encoding="utf-8"
+            ) as log_newest_file_loaded_file:
                 newest_file_loaded_path = (
-                    Path("data/queues") / topic / newest_file_loaded_log_file.read()
+                    self._local_queues_base_paths[topic]
+                    / log_newest_file_loaded_file.read()
                 )
 
             for current_file_path in topics_complete_files_lists[topic]:
@@ -174,20 +177,28 @@ class WarehouseTransformer:
                     except JSONDecodeError:
                         seen_incomplete_dicts += 1
 
-            queues_path = Path("data/queues")
-            newest_file_loaded_log_path = (
-                queues_path / f"{topic}_newest_file_loaded_log.txt"
+            log_newest_file_loaded_path = (
+                self._local_queues_base_paths[topic].parent
+                / f"{topic}_newest_file_loaded_log.txt"
             )
 
             with open(
-                str(newest_file_loaded_log_path),
+                str(log_newest_file_loaded_path),
                 "w",
                 encoding="utf-8",
-            ) as newest_file_loaded_log_file:
-                newest_file_loaded_log_file.write(event_file_path.name)
+            ) as log_newest_file_loaded_file:
+                log_newest_file_loaded_file.write(event_file_path.name)
 
-        print(
-            f"LOG: Out of {seen_dicts} total records, \n\t{seen_missing_primary_key_dicts} marked as missing primary key,\n\t{seen_incomplete_dicts} marked as incomplete."
+        log_func = (
+            WarehouseTransformer.logger.warning
+            if seen_missing_primary_key_dicts > 0 or seen_incomplete_dicts > 0
+            else WarehouseTransformer.logger.info
+        )
+        log_func(
+            "Out of %s total records, \n\t%s marked as missing primary key,\n\t%s marked as incomplete.",
+            seen_dicts,
+            seen_missing_primary_key_dicts,
+            seen_incomplete_dicts,
         )
 
         events_arrow_array = pa.array(events_data_str_list, type=pa.json_(pa.utf8()))
@@ -223,16 +234,22 @@ class WarehouseTransformer:
         dbt_result: dbtRunnerResult = self._dbt.invoke(
             [
                 "run",
+                "--project-dir",
+                "config",
                 "--profiles-dir",
-                run_config["dbt_profile_dir"],
+                "config",
+                "--target-path",
+                "target",
+                "--log-path",
+                "logs",
                 "--log-level",
                 "none",
                 "--fail-fast",
             ]
         )
 
-        print(
-            f"LOG: {total_records_loaded} records loaded and transformed with dbt models."
+        WarehouseTransformer.logger.info(
+            "%s records loaded and transformed with dbt models.", total_records_loaded
         )
 
         if dbt_result.exception:
@@ -263,9 +280,13 @@ class WarehouseTransformer:
         local_queues_base_paths: dict[str, Path],
         warehouse_path: Path,
     ):
-        warehouse_transformer = WarehouseTransformer(
-            sse_topics_metadata,
-            local_queues_base_paths,
-            warehouse_path,
-        )
-        warehouse_transformer.load_and_transform_continuously()
+        try:
+            warehouse_transformer = WarehouseTransformer(
+                sse_topics_metadata,
+                local_queues_base_paths,
+                warehouse_path,
+            )
+            warehouse_transformer.load_and_transform_continuously()
+        except Exception as error:  # pylint: disable=broad-except
+            WarehouseTransformer.logger.exception(error)
+            exit()

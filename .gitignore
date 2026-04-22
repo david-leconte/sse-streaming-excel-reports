@@ -4,15 +4,11 @@ __pycache__
 .venv
 
 # dbt
-.dbt/*
-!.dbt/profiles.yml
+.dbt
 logs
 target
-
-# dlt
-.dlt/*
-!.dlt/config.toml
+config/.user.yml
 
 # Downloaded data
-data
+run/data
 
