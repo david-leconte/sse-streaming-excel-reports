@@ -3,4 +3,10 @@ default:
   outputs:
     app:
       type: duckdb
-      path: data/warehouse.duckdb
+      path: "ducklake:sqlite:data/warehouse/warehouse.sqlite"
+      extensions:
+        - ducklake
+        - sqlite
+      options:
+        data_path: "data/warehouse/data_files"
+      

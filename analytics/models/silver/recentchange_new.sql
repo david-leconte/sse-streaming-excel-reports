@@ -12,6 +12,6 @@ SELECT
 	dt,
 	patrolled
 FROM
-	{{ ref('recentchange_all') }}
+	{{ ref('recentchange') }}
 WHERE
 	"type" = 'new'

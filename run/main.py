@@ -2,7 +2,7 @@ from multiprocessing import Process
 
 from run.utils import (
     topics_config,
-    create_local_layers_dirs,
+    create_local_files_dirs,
     create_local_queues_paths,
 )
 from run.write_topics import TopicQueuesAsyncWriter
@@ -12,7 +12,7 @@ if __name__ == "__main__":
     sse_api_base_url: str = topics_config["api"]["base_url"]
     sse_topics_metadata: dict[str, dict[str, str]] = topics_config["topics"]
 
-    data_path = create_local_layers_dirs()
+    data_path = create_local_files_dirs()
     all_queues_basepaths = create_local_queues_paths(
         data_path / "queues", sse_topics_metadata.keys()
     )
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         args=(
             sse_topics_metadata,
             all_queues_basepaths,
-            data_path / "warehouse.duckdb",
+            data_path / "warehouse"
         ),
         daemon=True,
     )

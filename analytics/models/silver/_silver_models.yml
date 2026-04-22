@@ -1,10 +1,10 @@
 sources:
   - name: bronze
     tables:
-      - name: recentchange
+      - name: recentchange_raw
 
 models:
-  - name: recentchange_all
+  - name: recentchange
     config:
       materialized: incremental
       unique_key: id

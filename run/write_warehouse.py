@@ -6,7 +6,9 @@ import time
 import sseclient
 import pyarrow as pa
 import duckdb
+from duckdb import DuckDBPyConnection
 from dbt.cli.main import dbtRunner, dbtRunnerResult
+from dbt.artifacts.schemas.run import RunExecutionResult
 
 from run.utils import run_config
 
@@ -22,20 +24,54 @@ class WarehouseTransformer:
         self._local_queues_base_paths = local_queues_base_paths
         self._warehouse_path = warehouse_path
 
-        self._duckdb_conn = duckdb.connect(str(self._warehouse_path))
+        self._duckdb_conn = self._attach_warehouse()
         self._dbt = dbtRunner()
 
         self._topics_bronze_table_exist: dict[str, bool] = (
             self._check_topics_bronze_table_exist()
         )
 
+    def _attach_warehouse(self) -> DuckDBPyConnection:
+        duckdb_conn = duckdb.connect()
+
+        warehouse_metadata_abs_path = (
+            self._warehouse_path / "warehouse.sqlite"
+        ).resolve()
+        warehouse_data_posix_abs_path = (self._warehouse_path / "data_files").resolve()
+
+        duckdb_conn.execute(
+            f"""
+            INSTALL ducklake;
+            INSTALL sqlite;
+            ATTACH 
+                'ducklake:sqlite:{warehouse_metadata_abs_path}' 
+                AS warehouse 
+                (
+                    DATA_PATH '{warehouse_data_posix_abs_path}',
+                    AUTOMATIC_MIGRATION true
+                );
+            USE warehouse;
+            """
+        )
+
+        return duckdb_conn
+
     def _check_topics_bronze_table_exist(self) -> dict[str, bool]:
+
         topics_bronze_table_exist = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
-            information_schema_table_record = self._duckdb_conn.sql(
-                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'bronze' AND table_name = '{topic}'"
-            ).fetchone()
+            query = f"""
+                SELECT 
+                    COUNT(*) 
+                FROM 
+                    information_schema.tables 
+                WHERE 
+                    table_schema = 'bronze' AND 
+                    table_name = '{topic}_raw'
+                """
+
+            information_schema_table_record = self._duckdb_conn.sql(query).fetchone()
 
             topics_bronze_table_exist[topic] = (
                 information_schema_table_record is not None
@@ -69,9 +105,7 @@ class WarehouseTransformer:
             )
 
             if not newest_file_loaded_log_path.exists():
-                new_files_list_per_topic[topic] = topics_complete_files_lists[
-                    topic
-                ]
+                new_files_list_per_topic[topic] = topics_complete_files_lists[topic]
                 continue
 
             if not topic in new_files_list_per_topic:
@@ -162,13 +196,17 @@ class WarehouseTransformer:
 
         if not self._topics_bronze_table_exist[topic]:
             self._duckdb_conn.sql(
-                f"""CREATE SCHEMA IF NOT EXISTS bronze;
-                CREATE TABLE IF NOT EXISTS bronze.{topic} (event JSON);"""
+                f"""
+                CREATE SCHEMA IF NOT EXISTS bronze;
+                CREATE TABLE IF NOT EXISTS bronze.{topic}_raw (event JSON);
+                """
             )
 
             self._topics_bronze_table_exist[topic] = True
 
-        self._duckdb_conn.sql(f"INSERT INTO bronze.{topic} SELECT * FROM events_arrow;")
+        self._duckdb_conn.sql(
+            f"INSERT INTO bronze.{topic}_raw SELECT * FROM events_arrow;"
+        )
 
         return seen_dicts
 
@@ -183,15 +221,35 @@ class WarehouseTransformer:
             return
 
         dbt_result: dbtRunnerResult = self._dbt.invoke(
-            ["run", "--profiles-dir", run_config["dbt_profile_dir"], "--quiet"]
+            [
+                "run",
+                "--profiles-dir",
+                run_config["dbt_profile_dir"],
+                "--log-level",
+                "none",
+                "--fail-fast",
+            ]
         )
 
         print(
             f"LOG: {total_records_loaded} records loaded and transformed with dbt models."
         )
 
-        if not dbt_result.success:
-            raise RuntimeError()
+        if dbt_result.exception:
+            raise dbt_result.exception
+
+        elif not dbt_result.success:
+            if isinstance(dbt_result.result, RunExecutionResult):
+                messages = "".join(
+                    [f"{result.message}\n" for result in dbt_result.result.results]
+                )
+
+                raise RuntimeError(f"dbt run failed without exception:\n{messages}")
+
+            else:
+                raise RuntimeError(
+                    "dbt run failed without exception nor detailed result."
+                )
 
     def load_and_transform_continuously(self):
         while True:
@@ -206,6 +264,8 @@ class WarehouseTransformer:
         warehouse_path: Path,
     ):
         warehouse_transformer = WarehouseTransformer(
-            sse_topics_metadata, local_queues_base_paths, warehouse_path
+            sse_topics_metadata,
+            local_queues_base_paths,
+            warehouse_path,
         )
         warehouse_transformer.load_and_transform_continuously()

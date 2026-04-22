@@ -3,11 +3,11 @@ from pathlib import Path
 import tomllib
 
 
-def create_local_layers_dirs() -> Path:
+def create_local_files_dirs() -> Path:
     data_path = Path("data")
     data_path.mkdir(exist_ok=True)
 
-    for layer in ["queues", "csv"]:
+    for layer in ["queues", "warehouse", "csv"]:
         layer_path = data_path / layer
         layer_path.mkdir(exist_ok=True)
 

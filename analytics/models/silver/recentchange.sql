@@ -19,4 +19,4 @@ SELECT
 	json_extract_string(event, '$.log_action') AS log_action,
 	event.log_params
 FROM
-	{{ source('bronze', 'recentchange') }}
+	{{ source('bronze', 'recentchange_raw') }}

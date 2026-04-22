@@ -16,6 +16,6 @@ SELECT
 	domain,
 	dt
 FROM
-	{{ ref('recentchange_all') }}
+	{{ ref('recentchange') }}
 WHERE
 	"type" = 'categorize'

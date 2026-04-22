@@ -34,6 +34,6 @@ SELECT
 	log_params.dest,
 	log_params.mergepoint,
 FROM
-	{{ ref('recentchange_all') }}
+	{{ ref('recentchange') }}
 WHERE
 	"type" = 'log'
