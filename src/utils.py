@@ -5,8 +5,6 @@ import tomllib
 import os
 import shutil
 
-from jinja2 import Environment, FileSystemLoader
-
 
 def get_process_logger(user_project_path: Path, name: str):
     os.makedirs(str(user_project_path / "logs"), exist_ok=True)
@@ -34,31 +32,19 @@ def get_process_logger(user_project_path: Path, name: str):
 
 
 def propagate_dbt_files_to_user_path(user_project_path: Path):
-    jinja_env = Environment(loader=FileSystemLoader("dbt_configs_templates"))
-    dbt_project_template_file_name = "dbt_project.yml.j2"
-    dbt_profiles_template_file_name = "profiles.yml.j2"
+    dbt_files_path = user_project_path / "dbt"
+    dbt_files_path.mkdir(exist_ok=True)
 
-    dbt_compiled_files_path = user_project_path / "dbt_compiled"
-    dbt_compiled_files_path.mkdir(exist_ok=True)
-
-    dbt_project_template = jinja_env.get_template(dbt_project_template_file_name)
-    dbt_project_rendered = dbt_project_template.render()
-    with open(
-        str(dbt_compiled_files_path / "dbt_project.yml"), "w", encoding="utf-8"
-    ) as f:
-        f.write(dbt_project_rendered)
-
-    dbt_profiles_template = jinja_env.get_template(dbt_profiles_template_file_name)
-    dbt_profiles_rendered = dbt_profiles_template.render(
-        user_project_dir=user_project_path.resolve().as_posix()
+    shutil.copyfile(
+        "dbt/dbt_project.yml", str(dbt_files_path / "dbt_project.yml")
     )
-    with open(
-        str(dbt_compiled_files_path / "profiles.yml"), "w", encoding="utf-8"
-    ) as f:
-        f.write(dbt_profiles_rendered)
+
+    shutil.copyfile(
+        "dbt/profiles.yml", str(dbt_files_path / "profiles.yml")
+    )
 
     shutil.copytree(
-        "macros", str(user_project_path / "macros"), dirs_exist_ok=True
+        "dbt/macros", str(user_project_path / "macros"), dirs_exist_ok=True
     )
 
 

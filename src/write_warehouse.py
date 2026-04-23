@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 from json.decoder import JSONDecodeError
 import time
+import os
 
 import sseclient
 import pyarrow as pa
@@ -24,7 +25,8 @@ class WarehouseTransformer:
         self._user_project_path = user_project_path
         self._local_queues_base_paths = local_queues_base_paths
 
-        self._duckdb_conn = self._attach_warehouse()
+        self._app_cwd_path = Path.cwd()
+        self._duckdb_conn: DuckDBPyConnection = self._attach_warehouse()
         self._dbt = dbtRunner()
 
         self._topics_bronze_table_exist: dict[str, bool] = (
@@ -233,17 +235,14 @@ class WarehouseTransformer:
         if seen_records < 1:
             return
 
-        dbt_compiled_abs_path = (
-            self._user_project_path / "dbt_compiled"
-        ).resolve()
-
+        os.chdir(self._user_project_path)
         dbt_result: dbtRunnerResult = self._dbt.invoke(
             [
                 "run",
                 "--project-dir",
-                str(dbt_compiled_abs_path),
+                "dbt",
                 "--profiles-dir",
-                str(dbt_compiled_abs_path),
+                "dbt",
                 "--target-path",
                 "target",
                 "--log-path",
@@ -253,6 +252,7 @@ class WarehouseTransformer:
                 "--fail-fast",
             ]
         )
+        os.chdir(self._app_cwd_path)
 
         self._logger.info(
             "%s records loaded and transformed with dbt models.", total_records_loaded

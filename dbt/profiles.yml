@@ -1,0 +1,9 @@
+default:
+  target: app
+  outputs:
+    app:
+      type: duckdb
+      path: "ducklake:sqlite:./data/warehouse/warehouse.sqlite"
+      extensions:
+        - ducklake
+        - sqlite
