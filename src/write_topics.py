@@ -118,7 +118,7 @@ class TopicQueuesAsyncWriter:
                     base_url, sse_topics_metadata, user_project_path, queues_base_paths
                 )
             )
-        except Exception as error:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except
             logger = get_process_logger(user_project_path, __name__)
-            logger.exception(error)
+            logger.exception("Error in topic queues writer, shutting down process...")
             exit()

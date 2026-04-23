@@ -1,9 +1,8 @@
+import logging
 from multiprocessing import Process
-from pathlib import Path
 
 from src.utils import (
-    run_config,
-    topics_config,
+    get_user_config_and_project_path,
     propagate_dbt_files_to_user_path,
     create_local_files_dirs,
     create_local_queues_paths,
@@ -12,13 +11,35 @@ from src.write_topics import TopicQueuesAsyncWriter
 from src.write_warehouse import WarehouseTransformer
 
 if __name__ == "__main__":
-    sse_api_base_url: str = topics_config["api"]["base_url"]
-    sse_topics_metadata: dict[str, dict[str, str]] = topics_config["topics"]
+    default_logger = logging.getLogger(__name__)
+    default_logger.setLevel(logging.ERROR)
 
-    user_project_path = Path(run_config["default_user_project_dir"])
+    try:
+        sse_api_base_url, sse_topics_metadata, user_project_path = (
+            get_user_config_and_project_path()
+        )
+    except (ValueError, FileNotFoundError, KeyError, RuntimeError):
+        default_logger.exception(
+            "Error getting user config and project path. Exiting...",
+        )
+        exit()
 
-    propagate_dbt_files_to_user_path(user_project_path)
-    data_path = create_local_files_dirs(user_project_path)
+    try:
+        propagate_dbt_files_to_user_path(user_project_path)
+    except OSError:
+        default_logger.exception(
+            "Error propagating dbt files to user path. Exiting...",
+        )
+        exit()
+
+    try:
+        data_path = create_local_files_dirs(user_project_path)
+    except OSError:
+        default_logger.exception(
+            "Error creating local files directories. Exiting...",
+        )
+        exit()
+
     all_queues_basepaths = create_local_queues_paths(
         data_path / "queues", sse_topics_metadata.keys()
     )
@@ -50,4 +71,10 @@ if __name__ == "__main__":
         ):
             pass
     except KeyboardInterrupt:
+        default_logger.setLevel(logging.INFO)
+        default_logger.info("Keyboard interrupt received. Terminating processes...")
+
+        topics_writer_process.terminate()
+        warehouse_transformer_process.terminate()
+        
         exit()
