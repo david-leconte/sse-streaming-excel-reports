@@ -3,6 +3,7 @@ import json
 from json.decoder import JSONDecodeError
 import time
 import os
+from datetime import datetime
 
 import sseclient
 import pyarrow as pa
@@ -45,7 +46,7 @@ class WarehouseTransformer:
             self._user_project_path / "data/warehouse/data_files"
         ).resolve()
 
-        duckdb_conn.execute(
+        duckdb_conn.sql(
             f"""
             INSTALL ducklake;
             INSTALL sqlite;
@@ -57,32 +58,27 @@ class WarehouseTransformer:
                     AUTOMATIC_MIGRATION true
                 );
             USE warehouse;
+            CREATE SCHEMA IF NOT EXISTS bronze;
             """
         )
 
         return duckdb_conn
 
     def _check_topics_bronze_table_exist(self) -> dict[str, bool]:
-
         topics_bronze_table_exist = dict()
 
-        for topic, _ in self._sse_topics_metadata.items():
-            query = f"""
-                SELECT 
-                    COUNT(*) 
-                FROM 
-                    information_schema.tables 
-                WHERE 
-                    table_schema = 'bronze' AND 
-                    table_name = '{topic}_raw'
-                """
+        bronze_tables_records = self._duckdb_conn.sql(
+            "SHOW TABLES FROM bronze;"
+        ).fetchall()
 
-            information_schema_table_record = self._duckdb_conn.sql(query).fetchone()
+        for bronze_table_record in bronze_tables_records:
+            bronze_table_name: str = bronze_table_record[0]
 
-            topics_bronze_table_exist[topic] = (
-                information_schema_table_record is not None
-                and information_schema_table_record[0] > 0
-            )
+            if bronze_table_name.endswith("_raw"):
+                topic_name = bronze_table_name.removesuffix("_raw")
+                
+                if topic_name in self._sse_topics_metadata:
+                    topics_bronze_table_exist[topic_name] = True
 
         return topics_bronze_table_exist
 
@@ -213,7 +209,6 @@ class WarehouseTransformer:
         if not self._topics_bronze_table_exist[topic]:
             self._duckdb_conn.sql(
                 f"""
-                CREATE SCHEMA IF NOT EXISTS bronze;
                 CREATE TABLE IF NOT EXISTS bronze.{topic}_raw (event JSON);
                 """
             )
@@ -275,9 +270,34 @@ class WarehouseTransformer:
                     "dbt run failed without exception nor detailed result."
                 )
 
+    def output_gold_layer_csv(self):
+        gold_tables_records = self._duckdb_conn.sql(
+            "SHOW TABLES FROM warehouse.gold;"
+        ).fetchall()
+
+        for gold_table_record in gold_tables_records:
+            gold_table_name = gold_table_record[0]
+
+            gold_table_csv_path = (
+                self._user_project_path
+                / f"data/csv/{gold_table_name}.csv"
+            )
+
+            self._duckdb_conn.sql(
+                f"COPY warehouse.gold.{gold_table_name} TO '{gold_table_csv_path}' (FORMAT CSV, HEADER, DELIM ';')"
+            )
+
     def load_and_transform_continuously(self):
+        last_csv_output_datetime = datetime.now()
+
         while True:
             self.load_and_transform_once()
+
+            if (datetime.now() - last_csv_output_datetime).seconds > (
+                run_config["output_gold_csv_every_seconds"]
+            ):
+                last_csv_output_datetime = datetime.now()
+                self.output_gold_layer_csv()
 
             time.sleep(run_config["load_and_transform_every_seconds"])
 

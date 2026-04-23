@@ -1,0 +1,16 @@
+sources:
+  - name: silver
+    tables:
+      - name: recentchange_categorize
+      - name: recentchange_edit
+      - name: recentchange_log
+      - name: recentchange_new
+
+
+models:
+  - name: recentchange_logs_per_domain_and_min
+    config:
+      materialized: view
+  - name: recentchange_human_vs_bot_new_and_edit_actions
+    config:
+      materialized: view
