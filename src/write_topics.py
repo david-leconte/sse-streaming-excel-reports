@@ -13,6 +13,9 @@ from src.utils import get_process_logger, run_config
 
 
 class TopicQueuesAsyncWriter:
+    def __init__(self, user_project_path: Path):
+        self._logger = get_process_logger(user_project_path, __name__)
+
     @staticmethod
     async def _get_new_topic_queue_file(
         topic: str, local_queues_basepaths: dict[str, Path]
@@ -26,8 +29,8 @@ class TopicQueuesAsyncWriter:
 
         return topic_last_queue_file_datetime, topic_last_queue_fp
 
-    @staticmethod
-    async def _write_topic_local_queue(
+    async def write_topic_local_queue(
+        self,
         topic: str,
         base_url: str,
         sse_topics_metadata: dict[str, dict[str, str]],
@@ -78,20 +81,23 @@ class TopicQueuesAsyncWriter:
                         await last_queue_file.write(current_contents)
 
             except ClientPayloadError:
-                print(
-                    f"ERROR: Connection dropped randomly on topic {topic}, trying again..."
+                self._logger.exception(
+                    "Connection dropped randomly on topic %s, trying again...", topic
                 )
 
     @staticmethod
     async def write_all_topics_local_queues_async(
         base_url: str,
         sse_topics_metadata: dict[str, dict[str, str]],
+        user_project_path: Path,
         queues_base_paths: dict[str, Path],
     ):
+        topics_writer = TopicQueuesAsyncWriter(user_project_path)
+
         async with asyncio.TaskGroup() as topics_task_group:
             for topic, _ in queues_base_paths.items():
                 topics_task_group.create_task(
-                    TopicQueuesAsyncWriter._write_topic_local_queue(
+                    topics_writer.write_topic_local_queue(
                         topic,
                         base_url,
                         sse_topics_metadata,
@@ -109,7 +115,7 @@ class TopicQueuesAsyncWriter:
         try:
             asyncio.run(
                 TopicQueuesAsyncWriter.write_all_topics_local_queues_async(
-                    base_url, sse_topics_metadata, queues_base_paths
+                    base_url, sse_topics_metadata, user_project_path, queues_base_paths
                 )
             )
         except Exception as error:  # pylint: disable=broad-except

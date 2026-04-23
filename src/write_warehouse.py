@@ -154,10 +154,12 @@ class WarehouseTransformer:
                     try:
                         event = next(events)
                     except UnicodeDecodeError as error:
-                        print(
-                            f"ERROR: Decoding UTF-8 failed on topic {topic } with file {event_file_path.name}"
+                        self._logger.error(
+                            "Decoding UTF-8 failed on topic %s with file %s",
+                            topic,
+                            event_file_path.name,
                         )
-                        print(error)
+                        self._logger.exception(error)
                         continue
                     except StopIteration:
                         break
