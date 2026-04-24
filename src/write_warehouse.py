@@ -55,6 +55,7 @@ class WarehouseTransformer:
                 AS warehouse 
                 (
                     DATA_PATH '{warehouse_data_abs_path}',
+                    OVERRIDE_DATA_PATH true,
                     AUTOMATIC_MIGRATION true
                 );
             USE warehouse;
