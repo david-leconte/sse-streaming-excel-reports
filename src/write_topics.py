@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import asyncio
 from asyncio import IncompleteReadError
+from multiprocessing.queues import Queue
 
 from aiofiles.threadpool.binary import AsyncBufferedIOBase
 import aiofiles
@@ -13,8 +14,12 @@ from src.utils import app_config, get_process_logger
 
 
 class TopicQueuesAsyncWriter:
-    def __init__(self, user_project_path: Path):
-        self._logger = get_process_logger(user_project_path, __name__)
+    def __init__(
+        self, user_project_path: Path, gui_global_log_queue: Queue | None = None
+    ):
+        self._logger = get_process_logger(
+            __name__, user_project_path, gui_global_log_queue
+        )
 
     @staticmethod
     async def _get_new_topic_queue_file(
@@ -91,8 +96,9 @@ class TopicQueuesAsyncWriter:
         sse_topics_metadata: dict[str, dict[str, str]],
         user_project_path: Path,
         queues_base_paths: dict[str, Path],
+        gui_global_log_queue: Queue | None = None,
     ):
-        topics_writer = TopicQueuesAsyncWriter(user_project_path)
+        topics_writer = TopicQueuesAsyncWriter(user_project_path, gui_global_log_queue)
 
         async with asyncio.TaskGroup() as topics_task_group:
             for topic, _ in queues_base_paths.items():
@@ -111,6 +117,7 @@ class TopicQueuesAsyncWriter:
         sse_topics_metadata: dict[str, dict[str, str]],
         user_project_path: Path,
         queues_base_paths: dict[str, Path],
+        gui_global_log_queue: Queue | None = None,
     ):
         try:
             asyncio.run(
@@ -119,9 +126,12 @@ class TopicQueuesAsyncWriter:
                     sse_topics_metadata,
                     user_project_path,
                     queues_base_paths,
+                    gui_global_log_queue,
                 )
             )
         except Exception:  # pylint: disable=broad-except
-            logger = get_process_logger(user_project_path, __name__)
+            logger = get_process_logger(
+                __name__, user_project_path, gui_global_log_queue
+            )
             logger.exception("Error in topic queues writer, shutting down process...")
             exit()

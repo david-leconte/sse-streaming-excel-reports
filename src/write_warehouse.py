@@ -4,6 +4,7 @@ from json.decoder import JSONDecodeError
 import time
 import os
 from datetime import datetime
+from multiprocessing.queues import Queue
 
 import sseclient
 import pyarrow as pa
@@ -21,6 +22,7 @@ class WarehouseTransformer:
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
         user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
+        gui_global_log_queue: Queue | None = None,
     ):
         self._sse_topics_metadata = sse_topics_metadata
         self._user_project_path = user_project_path
@@ -34,7 +36,9 @@ class WarehouseTransformer:
             self._check_topics_bronze_table_exist()
         )
 
-        self._logger = get_process_logger(user_project_path, __name__)
+        self._logger = get_process_logger(
+            __name__, user_project_path, gui_global_log_queue
+        )
 
     def _attach_warehouse(self) -> DuckDBPyConnection:
         duckdb_conn = duckdb.connect()
@@ -80,6 +84,10 @@ class WarehouseTransformer:
 
                 if topic_name in self._sse_topics_metadata:
                     topics_bronze_table_exist[topic_name] = True
+
+        for topic in self._sse_topics_metadata.keys():
+            if not topic in topics_bronze_table_exist:
+                topics_bronze_table_exist[topic] = False
 
         return topics_bronze_table_exist
 
@@ -306,15 +314,19 @@ class WarehouseTransformer:
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
         user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
+        gui_global_log_queue: Queue | None = None,
     ):
         try:
             warehouse_transformer = WarehouseTransformer(
                 sse_topics_metadata,
                 user_project_path,
                 local_queues_base_paths,
+                gui_global_log_queue,
             )
             warehouse_transformer.load_and_transform_continuously()
         except Exception:  # pylint: disable=broad-except
-            logger = get_process_logger(user_project_path, __name__)
+            logger = get_process_logger(
+                __name__, user_project_path, gui_global_log_queue
+            )
             logger.exception("Error in warehouse transformer, shutting down process...")
             exit()
