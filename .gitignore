@@ -7,3 +7,6 @@ __pycache__
 run/*
 !run/topics.toml
 !run/models
+
+# Generated build and distribution
+target

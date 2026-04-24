@@ -775,6 +775,12 @@ wheels = [
 ]
 
 [[package]]
+name = "nuitka"
+version = "4.0.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/48/e54130d57b89fc015d702e98a1a217b5757625d01a01cc07d29fd046d336/nuitka-4.0.8.tar.gz", hash = "sha256:3f87e87e4d3773997944ce401145ef21461337121d39ea0fbe678274005e60ba", size = 4422692, upload-time = "2026-04-10T07:18:15.109Z" }
+
+[[package]]
 name = "orderly-set"
 version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1211,6 +1217,7 @@ dependencies = [
     { name = "dbt-core" },
     { name = "dbt-duckdb" },
     { name = "duckdb" },
+    { name = "nuitka" },
     { name = "pyarrow" },
     { name = "sseclient-py" },
 ]
@@ -1222,6 +1229,7 @@ requires-dist = [
     { name = "dbt-core", specifier = "==1.11.*" },
     { name = "dbt-duckdb", specifier = "==1.10.*" },
     { name = "duckdb", specifier = "==1.5.*" },
+    { name = "nuitka", specifier = "==4.0.*" },
     { name = "pyarrow", specifier = "==23.0.*" },
     { name = "sseclient-py", specifier = "==1.9.0" },
 ]

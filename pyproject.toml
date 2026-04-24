@@ -1,6 +1,7 @@
 [project]
 name = "sse-streaming-excel-reports"
 version = "0.1.0"
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles==25.1.*",
@@ -10,4 +11,5 @@ dependencies = [
     "duckdb==1.5.*",
     "pyarrow==23.0.*",
     "sseclient-py==1.9.0",
+    "nuitka==4.0.*",
 ]
