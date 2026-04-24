@@ -12,7 +12,7 @@ from duckdb import DuckDBPyConnection
 from dbt.cli.main import dbtRunner, dbtRunnerResult
 from dbt.artifacts.schemas.run import RunExecutionResult
 
-from src.utils import get_process_logger, run_config
+from src.utils import app_config, get_process_logger
 
 
 class WarehouseTransformer:
@@ -76,7 +76,7 @@ class WarehouseTransformer:
 
             if bronze_table_name.endswith("_raw"):
                 topic_name = bronze_table_name.removesuffix("_raw")
-                
+
                 if topic_name in self._sse_topics_metadata:
                     topics_bronze_table_exist[topic_name] = True
 
@@ -279,8 +279,7 @@ class WarehouseTransformer:
             gold_table_name = gold_table_record[0]
 
             gold_table_csv_path = (
-                self._user_project_path
-                / f"data/csv/{gold_table_name}.csv"
+                self._user_project_path / f"data/csv/{gold_table_name}.csv"
             )
 
             self._duckdb_conn.sql(
@@ -294,12 +293,12 @@ class WarehouseTransformer:
             self.load_and_transform_once()
 
             if (datetime.now() - last_csv_output_datetime).seconds > (
-                run_config["output_gold_csv_every_seconds"]
+                app_config["output_gold_csv_every_seconds"]
             ):
                 last_csv_output_datetime = datetime.now()
                 self.output_gold_layer_csv()
 
-            time.sleep(run_config["load_and_transform_every_seconds"])
+            time.sleep(app_config["load_and_transform_every_seconds"])
 
     @staticmethod
     def build_and_run_continuously_warehouse_transformer(

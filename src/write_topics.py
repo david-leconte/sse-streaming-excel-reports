@@ -9,7 +9,7 @@ import aiofiles
 import aiohttp
 from aiohttp.client_exceptions import ClientPayloadError
 
-from src.utils import get_process_logger, run_config
+from src.utils import app_config, get_process_logger
 
 
 class TopicQueuesAsyncWriter:
@@ -47,7 +47,7 @@ class TopicQueuesAsyncWriter:
                     aiohttp.ClientSession(timeout=timeout) as session,
                     session.get(
                         base_url + "/" + sse_topics_metadata[topic]["path"],
-                        headers={"User-Agent": run_config["user_agent"]},
+                        headers={"User-Agent": app_config["user_agent"]},
                     ) as resp,
                 ):
                     while True:
@@ -68,7 +68,7 @@ class TopicQueuesAsyncWriter:
 
                         if (
                             datetime.now() - last_queue_file_datetime
-                        ).seconds > run_config[
+                        ).seconds > app_config[
                             "topic_new_queue_file_seconds_threshold"
                         ]:
                             await last_queue_file.close()
@@ -115,7 +115,10 @@ class TopicQueuesAsyncWriter:
         try:
             asyncio.run(
                 TopicQueuesAsyncWriter.write_all_topics_local_queues_async(
-                    base_url, sse_topics_metadata, user_project_path, queues_base_paths
+                    base_url,
+                    sse_topics_metadata,
+                    user_project_path,
+                    queues_base_paths,
                 )
             )
         except Exception:  # pylint: disable=broad-except
