@@ -5,3 +5,4 @@ dbt-duckdb==1.10.*
 duckdb==1.5.*
 pyarrow==23.0.*
 sseclient-py==1.9.0
+

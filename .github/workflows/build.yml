@@ -5,6 +5,15 @@ on:
     tags:
       - "*.*.*"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (skip build)"
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: write
@@ -26,10 +35,21 @@ jobs:
           pip install nuitka
 
       - name: Build
+        if: ${{ !inputs.dry_run }}
         run: python build.py
+
+      - name: Mock dist folder (dry run only)
+        if: ${{ inputs.dry_run }}
+        run: mkdir -p target/src.dist
+
+      - name: Produce Zip release file
+        run: |
+          mv target/src.dist target/${{ github.event.repository.name }}
+          python -m zipfile -c \
+            target/${{ github.event.repository.name }}-${{ github.ref_name }}.zip target/${{ github.event.repository.name }}
 
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
-            target/src.dist/*
-            README.md
+            target/${{ github.event.repository.name }}-${{ github.ref_name }}.zip
