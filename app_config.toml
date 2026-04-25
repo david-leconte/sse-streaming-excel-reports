@@ -1,4 +1,4 @@
-user_agent = "sse-streaming-excel-reports/0.1.0 (https://github.com/david-leconte/sse-streaming-excel-reports; david-leconte) Python/3.x aiohttp/3.x"
+user_agent = "sse-streaming-excel-reports/0.0.1 (https://github.com/david-leconte/sse-streaming-excel-reports; david-leconte) Python/3.x aiohttp/3.x"
 topic_new_queue_file_seconds_threshold = 60
 load_and_transform_every_seconds = 60
 output_gold_csv_every_seconds = 60

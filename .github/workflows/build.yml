@@ -1,0 +1,35 @@
+﻿name: Build
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install nuitka
+
+      - name: Build
+        run: python build.py
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            target/src.dist/*
+            README.md

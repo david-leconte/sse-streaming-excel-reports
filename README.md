@@ -1,7 +1,11 @@
 # SSE Streaming Excel Reports
 
-Live Excel reports coming from Server-sent events (SSE) sources
+Live Excel reports coming from Server-sent events (SSE) source (built with Python 3.13)
 
-## How to build the executable (Windows)
+## Build the executable (Windows)
 
-`python -m nuitka --output-dir=build --output-filename="sse_streaming_excel_reports.exe" --enable-plugins=tk-inter --mode=standalone --include-data-dir=dbt=dbt --include-data-dir=sample_project=sample_project src/main.py`
+```bash
+python -m pip install -r requirements.txt
+python -m pip install nuitka
+python build.py
+```
