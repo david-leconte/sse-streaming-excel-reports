@@ -7,7 +7,6 @@ from datetime import datetime
 from multiprocessing.queues import Queue
 
 import sseclient
-import pyarrow as pa
 import duckdb
 from duckdb import DuckDBPyConnection
 from dbt.cli.main import dbtRunner, dbtRunnerResult
@@ -211,9 +210,7 @@ class WarehouseTransformer:
             seen_incomplete_dicts,
         )
 
-        events_arrow_array = pa.array(events_data_str_list, type=pa.json_(pa.utf8()))
-        events_arrow_table = pa.table({"event": events_arrow_array})
-        self._duckdb_conn.register("events_arrow", events_arrow_table)
+        events_data_str = "[" + ",".join(events_data_str_list) + "]"
 
         if not self._topics_bronze_table_exist[topic]:
             self._duckdb_conn.sql(
@@ -224,8 +221,9 @@ class WarehouseTransformer:
 
             self._topics_bronze_table_exist[topic] = True
 
-        self._duckdb_conn.sql(
-            f"INSERT INTO bronze.{topic}_raw SELECT * FROM events_arrow;"
+        self._duckdb_conn.execute(
+            f"INSERT INTO bronze.{topic}_raw SELECT UNNEST(CAST(? AS JSON[])) AS event;",
+            [events_data_str],
         )
 
         return seen_dicts
