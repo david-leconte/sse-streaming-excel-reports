@@ -1,3 +1,24 @@
+"""
+WarehouseTransformer: Loads SSE events from local queues, transforms with dbt, outputs CSV.
+
+This module defines the WarehouseTransformer class that implements the ETL (Extract-Transform-Load)
+pipeline of the application. It:
+
+1. Attaches to a DuckDB database configured as a DuckLake warehouse
+   (metadata in SQLite, data files in a separate directory).
+2. Discovers new .bin queue files per topic (based on a "newest file loaded" log).
+3. Parses SSE events from those files, filters records missing the configured
+   primary key, and loads raw JSON into a bronze.{topic}_raw table.
+4. Invokes dbt to run the medallion transformation (bronze → silver → gold).
+5. Periodically exports gold layer tables to CSV files in <project>/data/csv/.
+
+The transformer is designed to run continuously in a loop, with configurable
+intervals for ETL execution and CSV export.
+
+Dependencies:
+    duckdb, dbt-core, dbt-duckdb, sseclient-py
+"""
+
 from pathlib import Path
 import json
 from json.decoder import JSONDecodeError
@@ -16,6 +37,23 @@ from src.utils import app_config, get_process_logger
 
 
 class WarehouseTransformer:
+    """
+    Manages the ETL pipeline: ingest local SSE queue files → DuckDB bronze → dbt → CSV.
+
+    The transformer runs in two modes:
+        - load_and_transform_once(): Single ETL cycle (used in tests / one-shot runs)
+        - load_and_transform_continuously(): Infinite loop with configurable sleep
+
+    Architecture:
+        Bronze layer: Raw JSON events loaded into bronze.{topic}_raw tables.
+        Silver layer: Parsed and normalized by dbt models (defined in sample_project/).
+        Gold layer: Aggregated/report-ready tables exported to CSV.
+
+    Multiprocessing:
+        Instantiated and run in a separate Process by the Run orchestrator;
+        logging can be forwarded to the parent via a multiprocessing.Queue.
+    """
+
     def __init__(
         self,
         sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
@@ -23,6 +61,18 @@ class WarehouseTransformer:
         local_queues_base_paths: dict[str, Path],
         gui_global_log_queue: Queue | None = None,
     ):
+        """
+        Initialize the WarehouseTransformer.
+
+        Args:
+            sse_topics_metadata: Mapping of topic names to their configuration
+                (at minimum: "path" and "primary_key" entries).
+            user_project_path: Absolute path to the user's project directory.
+            local_queues_base_paths: Mapping of topic name → directory path where
+                .bin queue files for that topic are stored.
+            gui_global_log_queue: Optional multiprocessing.Queue for forwarding
+                log records to a GUI (unused if running headless).
+        """
         self._sse_topics_metadata = sse_topics_metadata
         self._user_project_path = user_project_path
         self._local_queues_base_paths = local_queues_base_paths
@@ -40,6 +90,16 @@ class WarehouseTransformer:
         )
 
     def _attach_warehouse(self) -> DuckDBPyConnection:
+        """
+        Attach to the DuckDB DuckLake warehouse (SQLite metadata + data files).
+
+        Returns:
+            A connected DuckDBPyConnection instance with the warehouse attached
+            and the bronze schema created.
+
+        Raises:
+            duckdb.Error: If the ATTACH statement fails.
+        """
         duckdb_conn = duckdb.connect()
 
         warehouse_metadata_abs_path = (
@@ -69,6 +129,12 @@ class WarehouseTransformer:
         return duckdb_conn
 
     def _check_topics_bronze_table_exist(self) -> dict[str, bool]:
+        """
+        Scan existing bronze tables and mark which topics already have a raw table.
+
+        Returns:
+            Dictionary mapping topic names → True if bronze.{topic}_raw exists.
+        """
         topics_bronze_table_exist = dict()
 
         bronze_tables_records = self._duckdb_conn.sql(
@@ -91,6 +157,12 @@ class WarehouseTransformer:
         return topics_bronze_table_exist
 
     def _get_complete_files_per_topic(self) -> dict[str, list[Path]]:
+        """
+        List all .bin queue files for each topic, sorted by filename.
+
+        Returns:
+            Mapping of topic name → sorted list of .bin file paths.
+        """
         complete_files_list_per_topic = dict()
 
         for topic, _ in self._sse_topics_metadata.items():
@@ -104,6 +176,15 @@ class WarehouseTransformer:
 
     @property
     def _topics_new_files_lists(self) -> dict[str, list[Path]]:
+        """
+        Determine which queue files are new (unprocessed) for each topic.
+
+        Uses a "{topic}_newest_file_loaded_log.txt" file in the queue's parent
+        directory to track the last processed file. All newer files are returned.
+
+        Returns:
+            Mapping of topic name → list of new .bin file Paths.
+        """
         topics_complete_files_lists = self._get_complete_files_per_topic()
 
         new_files_list_per_topic = dict()
@@ -139,6 +220,26 @@ class WarehouseTransformer:
         self,
         topic: str,
     ) -> int:
+        """
+        Parse SSE events from new queue files and insert into bronze.{topic}_raw.
+
+        For each event in each new file:
+            - Attempt to parse event.data as JSON
+            - Skip records missing any primary key field (counted in logger)
+            - Append valid JSON strings to a bulk INSERT batch
+        After processing each file, the "newest file loaded" log is updated.
+        The bronze table is created if it does not already exist.
+
+        Args:
+            topic: Topic name as defined in topics.toml.
+
+        Returns:
+            Total number of SSE events seen across all new files for this topic.
+
+        Raises:
+            No exceptions are raised; records causing JSONDecodeError or
+            missing primary keys are counted and skipped.
+        """
         primary_key = self._sse_topics_metadata[topic]["primary_key"]
 
         events_data_str_list: list[str] = []
@@ -229,6 +330,12 @@ class WarehouseTransformer:
         return seen_dicts
 
     def load_and_transform_once(self):
+        """
+        Run a single ETL cycle: load all topics' new events and run dbt.
+
+        Does not output CSV. See output_gold_layer_csv() and
+        load_and_transform_continuously() for periodic CSV export.
+        """
         total_records_loaded = 0
 
         for topic in self._sse_topics_metadata.keys():
@@ -278,6 +385,7 @@ class WarehouseTransformer:
                 )
 
     def output_gold_layer_csv(self):
+        """Export all gold layer tables to CSV in <project>/data/csv/."""
         gold_tables_records = self._duckdb_conn.sql(
             "SHOW TABLES FROM warehouse.gold;"
         ).fetchall()
@@ -294,6 +402,13 @@ class WarehouseTransformer:
             )
 
     def load_and_transform_continuously(self):
+        """
+        Run ETL cycles and CSV exports in an infinite loop.
+
+        Sleeps between cycles according to app_config["load_and_transform_every_seconds"].
+        Exports gold-layer CSV every app_config["output_gold_csv_every_seconds"].
+        Intended to run as a daemon process; terminates only on exception or process kill.
+        """
         last_csv_output_datetime = datetime.now()
 
         while True:
@@ -314,6 +429,18 @@ class WarehouseTransformer:
         local_queues_base_paths: dict[str, Path],
         gui_global_log_queue: Queue | None = None,
     ):
+        """
+        Factory method to instantiate and run the transformer in a new process.
+
+        Designed as a multiprocessing entry point. Catches all exceptions,
+        logs them, and exits with status 1 on failure.
+
+        Args:
+            sse_topics_metadata: Topics configuration dictionary.
+            user_project_path: User project root path.
+            local_queues_base_paths: Per-topic queue directory mapping.
+            gui_global_log_queue: Optional log-forwarding queue for the GUI.
+        """
         try:
             warehouse_transformer = WarehouseTransformer(
                 sse_topics_metadata,

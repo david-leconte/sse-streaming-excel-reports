@@ -1,3 +1,21 @@
+"""
+Run: Multiprocessing orchestrator for the SSE streaming pipeline.
+
+This module defines the Run class, which is responsible for:
+    - Validating and loading the user's project configuration (topics.toml)
+    - Copying dbt project files into the user project directory
+    - Creating required data subdirectories (logs, data/{queues,warehouse,csv})
+    - Spawning two daemon processes:
+        1. TopicQueuesAsyncWriter  — SSE ingestion → local queue files
+        2. WarehouseTransformer    — queue files → DuckDB → dbt → CSV
+    - Managing process lifecycle (launch, terminate, monitor)
+
+The Run class is used both by the CLI entry point (__main__.py) and the
+GUI (gui.py). In CLI mode, Run.launch() blocks indefinitely until the
+pipeline exits or the user hits Ctrl-C. In GUI mode, Run runs as a
+background process and its is_active flag controls button states.
+"""
+
 import logging
 from multiprocessing import Process
 from multiprocessing.queues import Queue
@@ -14,12 +32,42 @@ from src.write_warehouse import WarehouseTransformer
 
 
 class Run:
+    """
+    Orchestrates the SSE streaming pipeline in two daemon processes.
+
+    Workflow:
+        1. __init__() loads topics.toml, propagates dbt files, and creates
+           the local directory structure (<project>/logs, data/{queues,warehouse,csv}).
+        2. launch() spawns the TopicQueuesAsyncWriter and WarehouseTransformer
+           processes and, if not in GUI mode, blocks until both exit.
+        3. terminate() forcefully ends both child processes.
+
+    Attributes:
+        is_active (bool): True while both child processes are running.
+        _topics_writer_process (Process | None): SSE writer process handle.
+        _warehouse_transformer_process (Process | None): ETL process handle.
+    """
+
     def __init__(
         self,
         user_project_dir_input: str,
         is_gui_run: bool = False,
         gui_global_log_queue: Queue | None = None,
     ):
+        """
+        Initialize a Run instance and prepare the project environment.
+
+        Args:
+            user_project_dir_input: Path to a folder containing topics.toml.
+            is_gui_run: True if launched from the GUI (affects exit behavior).
+            gui_global_log_queue: Optional multiprocessing.Queue for log
+                records to be displayed in the GUI.
+
+        Raises:
+            FileNotFoundError: If the provided directory or topics.toml is missing.
+            RuntimeError: If topics.toml cannot be parsed or is missing keys.
+            OSError: If required directories or dbt files cannot be created/copied.
+        """
         self._gui_global_log_queue = gui_global_log_queue
         self._logger = get_process_logger(
             __name__, gui_global_log_queue=self._gui_global_log_queue
@@ -64,6 +112,16 @@ class Run:
     def _get_user_config_and_project_path(
         self,
     ) -> Tuple[str, dict[str, dict[str, str]], Path]:
+        """
+        Locate, parse, and validate the user's topics.toml file.
+
+        Returns:
+            Tuple of (base_url, topics_metadata, project_path).
+
+        Raises:
+            FileNotFoundError: If the directory or topics.toml does not exist.
+            RuntimeError: If the TOML file is malformed or missing required keys.
+        """
         if not Path(self._user_project_dir_input).exists():
             raise FileNotFoundError(
                 f"Provided user project directory path does not exist: {self._user_project_dir_input}"
@@ -95,6 +153,12 @@ class Run:
         return sse_api_base_url, sse_topics_metadata, user_project_path
 
     def _propagate_dbt_files_to_user_path(self):
+        """
+        Copy packaged dbt files into the user project's dbt/ directory.
+
+        Copies dbt_project.yml, profiles.yml and the macros/ subtree from
+        the repository's dbt/ directory into <user_project_path>/dbt/.
+        """
         dbt_files_path = self._user_project_path / "dbt"
 
         try:
@@ -120,6 +184,19 @@ class Run:
             ) from error
 
     def _create_local_files_dirs(self) -> Path:
+        """
+        Create the data and logs directory hierarchy in the user project.
+
+        Creates:
+            <project>/logs
+            <project>/data/
+                ├── queues/
+                ├── warehouse/
+                └── csv/
+
+        Returns:
+            Path to the created <project>/data directory.
+        """
         try:
             os.makedirs(str(self._user_project_path / "logs"), exist_ok=True)
         except OSError as error:
@@ -149,6 +226,12 @@ class Run:
         return data_path
 
     def _create_local_queues_paths(self) -> dict[str, Path]:
+        """
+        Create per-topic subdirectories under data/queues/.
+
+        Returns:
+            Dictionary mapping topic names → Path objects for their queue folder.
+        """
         all_queues_basepaths = dict()
 
         for topic in self._sse_topics_metadata:
@@ -158,6 +241,11 @@ class Run:
         return all_queues_basepaths
 
     def terminate(self):
+        """
+        Terminate both child processes (if running) and mark the run inactive.
+
+        Safe to call even if processes have not been started or are already dead.
+        """
         if not self._topics_writer_process or not self._warehouse_transformer_process:
             self._logger.error("Processes have not been started yet")
 
@@ -170,6 +258,18 @@ class Run:
         self.is_active = False
 
     def launch(self):
+        """
+        Start the SSE writer and warehouse transformer processes and monitor them.
+
+        Spawns two daemon processes:
+            - TopicQueuesAsyncWriter.build_and_run_topic_queues_writer
+            - WarehouseTransformer.build_and_run_continuously_warehouse_transformer
+
+        If running in CLI mode (is_gui_run=False), this method blocks, polling
+        both processes until one exits. A KeyboardInterrupt triggers a graceful
+        shutdown via terminate(). In GUI mode, this method returns immediately
+        and the GUI polls is_active to determine state.
+        """
         self._topics_writer_process = Process(
             target=TopicQueuesAsyncWriter.build_and_run_topic_queues_writer,
             args=(

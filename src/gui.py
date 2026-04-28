@@ -1,3 +1,17 @@
+"""
+Tkinter-based graphical user interface for the SSE Streaming Excel Reports application.
+
+This module defines the AppWindow class, a Tkinter window that allows users to:
+    - Configure global application parameters (User-Agent, timing thresholds)
+    - Select an existing project folder (containing topics.toml)
+    - Create a new project from the bundled Wikimedia EventStreams sample
+    - Start/stop the streaming pipeline
+    - View live log output from the child processes
+
+The GUI runs in the main thread while spawning the pipeline in separate
+multiprocessing.Process workers.
+"""
+
 from pathlib import Path
 from tkinter import Tk, Menu, Text, StringVar
 from tkinter.ttk import Frame, LabelFrame, Label, Entry, Button
@@ -11,7 +25,49 @@ from src.utils import app_config, get_process_logger, copy_sample_project_into_u
 
 
 class AppWindow(Tk):
+    """
+    Main application window for the GUI mode.
+
+    Layout:
+        ┌────────────────────────────────────────────────────────┐
+        │  File [Exit]                                            │
+        │                                                         │
+        │  App configuration                                      │
+        │  ┌─────────────────────────────────────────────────┐   │
+        │  │ User-Agent:          [Text field]               │   │
+        │  │ New file after (s):  [Entry]                    │   │
+        │  │ Load interval (s):   [Entry]                    │   │
+        │  │ CSV output every (s):[Entry]                    │   │
+        │  └─────────────────────────────────────────────────┘   │
+        │                                                         │
+        │  Project configuration                                  │
+        │  ┌─────────────────────────────────────────────────┐   │
+        │  │  No project folder selected                      │   │
+        │  │  [Try sample project]                            │   │
+        │  └─────────────────────────────────────────────────┘   │
+        │                                                         │
+        │  [Start processing events]                              │
+        │                                                         │
+        │  Events (log output)                                    │
+        │  ┌─────────────────────────────────────────────────┐   │
+        │  │  ... log lines ...                               │   │
+        │  └─────────────────────────────────────────────────┘   │
+        └────────────────────────────────────────────────────────┘
+
+    Attributes:
+        _gui_global_log_queue (Queue): Multiprocessing queue for log records.
+        _gui_logger (logging.Logger): Logger for the GUI process.
+        _tk_app_config (dict[str, StringVar]): Tkinter variable wrappers for
+            each app_config key (user_agent, topic_new_queue_file_seconds_threshold,
+            load_and_transform_every_seconds, output_gold_csv_every_seconds).
+        _run (Run | None): The active Run instance (if a project is loaded).
+        _start_stop_button_text (StringVar): Button label text.
+        _log_output (Text): Text widget for displaying live logs.
+        _is_project_opened_text (StringVar): Status line above the Try button.
+    """
+
     def __init__(self):
+        """Initialize the main window and all UI components."""
         super().__init__()
         self.title("SSE Streaming Excel Reports")
 
@@ -34,7 +90,14 @@ class AppWindow(Tk):
         self._start_stop_button_text = self._create_start_stop_button()
         self._log_output = self._create_log_output()
 
-    def _store_tk_app_config(self):
+    def _store_tk_app_config(self) -> dict[str, StringVar]:
+        """
+        Wrap each app_config value into a Tkinter StringVar for two-way binding.
+
+        Returns:
+            Dictionary mapping config keys to StringVar instances initialized
+            with current values from app_config.toml.
+        """
         tk_app_config = {}
 
         for key, value in app_config.items():
@@ -43,6 +106,7 @@ class AppWindow(Tk):
         return tk_app_config
 
     def _create_menu_bar(self):
+        """Create the top menu bar with File → Open project folder and Exit."""
         menu_bar = Menu(self)
         self.config(menu=menu_bar)
 
@@ -54,6 +118,7 @@ class AppWindow(Tk):
         menu_bar.add_command(label="Exit")
 
     def _create_app_config_form(self):
+        """Create the 'App configuration' labeled frame with four fields."""
         app_config_frame = LabelFrame(self._global_frame, text="App configuration")
         app_config_frame.grid(column=0, row=0, padx=10, pady=10)
 
@@ -100,6 +165,7 @@ class AppWindow(Tk):
         ).grid(row=3, column=1)
 
     def _create_user_config_form(self):
+        """Create the 'Project configuration' labeled frame."""
         user_config_frame = LabelFrame(self._global_frame, text="Project configuration")
         user_config_frame.grid(
             column=0,
@@ -139,7 +205,8 @@ class AppWindow(Tk):
             pady=(10, 10),
         )
 
-    def _create_start_stop_button(self):
+    def _create_start_stop_button(self) -> StringVar:
+        """Create the Start/Stop processing button and return its label StringVar."""
         start_stop_frame = Frame(self._global_frame)
         start_stop_frame.grid(column=0, row=2, padx=10, pady=10)
 
@@ -153,6 +220,7 @@ class AppWindow(Tk):
         return start_stop_button_text
 
     def _create_log_output(self) -> Text:
+        """Create the scrollable text area for live log output and return it."""
         log_output_frame = LabelFrame(self._global_frame, text="Events")
         log_output_frame.grid(column=0, row=3, padx=10, pady=10)
 
@@ -162,6 +230,7 @@ class AppWindow(Tk):
         return log_output_text
 
     def _open_project_folder(self):
+        """Handle 'Open project folder' menu action: prompt and create Run instance."""
         user_selected_project_dir = filedialog.askdirectory(
             title="Select project folder (with a topics.toml file and a models directory)"
         )
@@ -184,6 +253,7 @@ class AppWindow(Tk):
         )
 
     def _try_sample_project(self):
+        """Handle 'Try' button: copy sample project and create Run instance."""
         user_selected_parent_path = Path(
             filedialog.askdirectory(title="Select parent folder for the sample project")
         )
@@ -206,6 +276,12 @@ class AppWindow(Tk):
         )
 
     def _start_stop_button_action(self):
+        """
+        Handle Start/Stop button click.
+
+        Starts the pipeline if no run is active; stops it if already running.
+        Updates the button label accordingly.
+        """
         if not self._run:
             self._gui_logger.error(
                 "No project selected. Please select a project folder or try the sample project."
@@ -219,6 +295,11 @@ class AppWindow(Tk):
             self._start_stop_button_text.set("Stop processing events")
 
     def _watch_log_queue(self):
+        """
+        Poll the multiprocessing log queue and append new records to the text widget.
+
+        Scheduled via Tkinter's after() to run every 200 ms during the GUI lifetime.
+        """
         while not self._gui_global_log_queue.empty():
             log_record: LogRecord = self._gui_global_log_queue.get()
             self._log_output.insert("end", f"{log_record.msg}\n")
