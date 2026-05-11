@@ -28,5 +28,5 @@ def main():
         app_window.mainloop()
 
 
-main()
-
+if __name__ == "__main__":
+    main()

@@ -1,50 +1,48 @@
+"""
+Tests for the main entry point module.
+
+This module contains tests for the main() function which serves as the application's
+entry point. The tests verify that the correct components are instantiated based on
+whether a project directory is provided via CLI arguments or the GUI should be launched.
+"""
+
+from unittest.mock import patch
+from src.__main__ import main
+
+
 class TestMainFunction:
-    def test_gets_user_project_dir_from_cli(self):
-        """Should retrieve user project directory from CLI input."""
-        # TODO
+    """Test suite for the main() function behavior."""
 
-    def test_creates_run_instance_when_cli_arg_provided(self):
-        """Should create Run instance when project directory provided."""
-        # TODO
+    @patch("src.__main__.Run")
+    @patch("src.__main__.get_user_project_dir_cli_input")
+    def test_creates_run_instance_when_cli_arg_provided(
+        self, mock_user_dir_input, mock_run_class, temp_project_path
+    ):
+        """
+        Test that main() creates a Run instance when a CLI argument is provided.
 
-    def test_launches_run_when_cli_arg_provided(self):
-        """Should call run.launch() when project directory provided."""
-        # TODO
+        When get_user_project_dir_cli_input returns a valid path, main() should
+        instantiate the Run class with that path and call its launch() method.
+        """
+        temp_project_path_str = str(temp_project_path)
 
-    def test_creates_gui_app_when_no_cli_arg(self):
-        """Should create AppWindow instance when no CLI argument."""
-        # TODO
+        mock_user_dir_input.return_value = temp_project_path_str
+        main()
 
-    def test_starts_gui_mainloop_when_no_cli_arg(self):
-        """Should call app_window.mainloop() when no CLI argument."""
-        # TODO
+        mock_run_class.assert_called_once_with(temp_project_path_str)
+        mock_run_class.return_value.launch.assert_called_once()
 
-    def test_passes_none_for_gui_log_queue_to_cli_run(self):
-        """Should not pass gui_log_queue to Run from CLI."""
-        # TODO
+    @patch("src.__main__.AppWindow")
+    @patch("src.__main__.get_user_project_dir_cli_input", return_value=None)
+    def test_creates_gui_app_when_no_cli_arg(
+        self, _mock_user_dir_input, mock_app_window_class
+    ):
+        """
+        Test that main() launches GUI when no CLI argument is provided.
 
-    def test_prefers_cli_argument_over_gui(self):
-        """Should use CLI argument if provided, even when capable of GUI."""
-        # TODO
-
-    def test_gracefully_exits_if_no_argument_and_gui_not_available(self):
-        """Should handle case where no CLI argument and GUI unavailable."""
-        # TODO
-
-
-class TestMainIntegration:
-    def test_cli_path_workflow(self):
-        """Should execute complete CLI path workflow."""
-        # TODO
-
-    def test_gui_path_workflow(self):
-        """Should execute complete GUI path workflow."""
-        # TODO
-
-    def test_handles_invalid_project_directory(self):
-        """Should handle error when invalid project directory provided."""
-        # TODO
-
-    def test_handles_missing_topics_toml(self):
-        """Should handle error when topics.toml missing."""
-        # TODO
+        When get_user_project_dir_cli_input returns None, main() should instantiate
+        the AppWindow class and start its mainloop.
+        """
+        main()
+        mock_app_window_class.assert_called_once()
+        mock_app_window_class.return_value.mainloop.assert_called_once()

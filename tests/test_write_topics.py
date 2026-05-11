@@ -1,219 +1,254 @@
+"""
+Tests for the TopicQueuesAsyncWriter class.
+
+This module tests the asynchronous writer that consumes SSE events from multiple
+topics and writes them to binary queue files. Tests cover file creation,
+event streaming, time-based file rotation, error handling, and concurrent
+topic processing.
+"""
+
 import pytest
+from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime
+from aiohttp.client_exceptions import ClientPayloadError
+from asyncio import IncompleteReadError
+from src.write_topics import TopicQueuesAsyncWriter
 
 
-class TestTopicQueuesAsyncWriterInit:
-    def test_initializes_with_user_project_path(self):
-        """Should initialize with user_project_path."""
-        # TODO
-
-    def test_creates_logger_for_module(self):
-        """Should create process logger for the module."""
-        # TODO
-
-    def test_accepts_optional_gui_log_queue(self):
-        """Should accept optional gui_global_log_queue parameter."""
-        # TODO
-
-    def test_logger_passed_to_queue_handler_when_provided(self):
-        """Should pass gui_global_log_queue to logger."""
-        # TODO
-
-
-class TestGetNewTopicQueueFile:
-    @pytest.mark.asyncio
-    async def test_creates_new_binary_file(self):
-        """Should create a new binary file for the topic."""
-        # TODO
+class TestWriteTopics:
+    """Test suite for TopicQueuesAsyncWriter functionality."""
 
     @pytest.mark.asyncio
-    async def test_returns_datetime_and_file_handle_tuple(self):
-        """Should return tuple of (datetime, AsyncBufferedIOBase)."""
-        # TODO
+    @patch("aiohttp.ClientSession.get")
+    @patch("aiofiles.open", new_callable=AsyncMock)
+    async def test_creates_new_binary_file(
+        self,
+        mock_aiofiles_open,
+        mock_session_get,
+        temp_project_path,
+        sample_api_base_url,
+        sample_one_sse_topic,
+    ):
+        """
+         Test that write_topic_local_queue creates a new binary queue file.
+
+         When processing a topic, a new file should be created with a timestamp
+        -based name (Unix timestamp with decimal precision) and opened in
+         binary write mode.
+        """
+        mock_file = AsyncMock()
+        mock_aiofiles_open.return_value = mock_file
+        mock_resp = AsyncMock()
+        mock_resp.content.readuntil.side_effect = [
+            b"event_data\n\n",
+            Exception("Stop reading new events"),
+        ]
+        mock_session_get.return_value.__aenter__.return_value = mock_resp
+
+        writer = TopicQueuesAsyncWriter(temp_project_path)
+
+        with pytest.raises(Exception, match="Stop reading new events"):
+            await writer.write_topic_local_queue(
+                sample_one_sse_topic["name"],
+                sample_api_base_url,
+                sample_one_sse_topic["metadata"],
+                sample_one_sse_topic["basepaths"],
+            )
+
+        mock_aiofiles_open.assert_called_once()
+        assert mock_aiofiles_open.call_args.args[0].name.endswith(".bin")
+        assert mock_aiofiles_open.call_args.args[1] == "wb"
 
     @pytest.mark.asyncio
-    async def test_file_named_with_timestamp(self):
-        """Should name file using current timestamp."""
-        # TODO
+    @patch("src.write_topics.TopicQueuesAsyncWriter._get_new_topic_queue_file")
+    @patch("aiohttp.ClientSession.get")
+    async def test_writes_events_to_queue_file(
+        self,
+        mock_session_get,
+        mock_get_new_file,
+        temp_project_path,
+        sample_api_base_url,
+        sample_one_sse_topic,
+    ):
+        """
+        Test that SSE events are correctly written to the queue file.
+
+        Each SSE event data chunk should be written to the binary file.
+        The test simulates multiple readuntil calls followed by an
+        IncompleteReadError to signal stream termination.
+        """
+        mock_file = AsyncMock()
+        mock_get_new_file.return_value = (datetime.now(), mock_file)
+        mock_resp = AsyncMock()
+        mock_resp.content.readuntil.side_effect = [
+            b"event_data\n\n",
+            Exception("Stop reading new events"),
+        ]
+        mock_session_get.return_value.__aenter__.return_value = mock_resp
+
+        writer = TopicQueuesAsyncWriter(temp_project_path)
+
+        with pytest.raises(Exception, match="Stop reading new events"):
+            await writer.write_topic_local_queue(
+                sample_one_sse_topic["name"],
+                sample_api_base_url,
+                sample_one_sse_topic["metadata"],
+                sample_one_sse_topic["basepaths"],
+            )
+
+        mock_file.write.assert_called_once_with(b"event_data\n\n")
 
     @pytest.mark.asyncio
-    async def test_file_has_bin_extension(self):
-        """Should create file with .bin extension."""
-        # TODO
+    @patch("src.write_topics.TopicQueuesAsyncWriter._get_new_topic_queue_file")
+    @patch("aiohttp.ClientSession.get")
+    @patch(
+        "src.write_topics.app_config",
+        {"topic_new_queue_file_seconds_threshold": -1, "user_agent": "test"},
+    )
+    async def test_creates_new_file_after_time_threshold(
+        self,
+        mock_session_get,
+        mock_get_new_file,
+        temp_project_path,
+        sample_api_base_url,
+        sample_one_sse_topic,
+    ):
+        """
+        Test that a new queue file is created when the time threshold is exceeded.
+
+        With a negative threshold (-1 seconds), each event triggers a new file.
+        The previous file should be closed when switching to a new one.
+        """
+        mock_file1 = AsyncMock()
+        mock_file2 = AsyncMock()
+        mock_file3 = AsyncMock()
+
+        mock_get_new_file.side_effect = [
+            (datetime.now(), mock_file1),
+            (datetime.now(), mock_file2),
+            (datetime.now(), mock_file3),
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.content.readuntil.side_effect = [
+            b"data1\n\n",
+            b"data2\n\n",
+            Exception("Stop reading new events"),
+        ]
+        mock_session_get.return_value.__aenter__.return_value = mock_resp
+
+        writer = TopicQueuesAsyncWriter(temp_project_path)
+
+        with pytest.raises(Exception, match="Stop reading new events"):
+            await writer.write_topic_local_queue(
+                sample_one_sse_topic["name"],
+                sample_api_base_url,
+                sample_one_sse_topic["metadata"],
+                sample_one_sse_topic["basepaths"],
+            )
+
+        assert mock_get_new_file.call_count == 3
+        mock_file1.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_file_created_in_topic_base_path(self):
-        """Should create file in the topic's base path from queues_base_paths."""
-        # TODO
+    @patch("aiohttp.ClientSession.get")
+    async def test_handles_incomplete_read_error(
+        self,
+        mock_session_get,
+        temp_project_path,
+        sample_api_base_url,
+        sample_one_sse_topic,
+    ):
+        """
+        Test that IncompleteReadError during streaming is properly handled.
+
+        When the SSE stream ends with an IncompleteReadError, the writer
+        should exit gracefully.
+        """
+        mock_resp = AsyncMock()
+        mock_resp.content.readuntil.side_effect = IncompleteReadError(b"partial", None)
+        mock_session_get.side_effect = [
+            mock_session_get.return_value,
+            Exception("Stop reading new events"),
+        ]
+        mock_session_get.return_value.__aenter__.return_value = mock_resp
+
+        writer = TopicQueuesAsyncWriter(temp_project_path)
+
+        with pytest.raises(Exception, match="Stop reading new events"):
+            await writer.write_topic_local_queue(
+                sample_one_sse_topic["name"],
+                sample_api_base_url,
+                sample_one_sse_topic["metadata"],
+                sample_one_sse_topic["basepaths"],
+            )
 
     @pytest.mark.asyncio
-    async def test_returned_datetime_is_close_to_now(self):
-        """Should return datetime close to current time."""
-        # TODO
+    @patch("aiohttp.ClientSession.get")
+    async def test_handles_client_payload_error_with_retry(
+        self,
+        mock_session_get,
+        temp_project_path,
+        sample_api_base_url,
+        sample_one_sse_topic,
+    ):
+        """
+        Test that ClientPayloadError triggers a retry and eventually stops.
+
+        The first attempt should raise ClientPayloadError, which should be
+        retried once before the test stops with a stop exception.
+        """
+        mock_session_get.side_effect = [
+            ClientPayloadError(),
+            Exception("Stop retrying API server connection"),
+        ]
+        writer = TopicQueuesAsyncWriter(temp_project_path)
+        with pytest.raises(Exception, match="Stop retrying API server connection"):
+            await writer.write_topic_local_queue(
+                sample_one_sse_topic["name"],
+                sample_api_base_url,
+                sample_one_sse_topic["metadata"],
+                sample_one_sse_topic["basepaths"],
+            )
 
     @pytest.mark.asyncio
-    async def test_file_handle_is_in_write_mode(self):
-        """Should open file handle in binary write mode ('wb')."""
-        # TODO
+    @patch("asyncio.TaskGroup")
+    async def test_executes_multiple_topics_concurrently(
+        self, mock_asyncio_tg_class, temp_project_path, sample_api_base_url
+    ):
+        """
+        Test that write_all_topics_local_queues_async creates concurrent tasks.
 
+        When multiple topics are configured, a separate async task should be
+        created for each topic using an asyncio TaskGroup.
+        """
 
-class TestWriteTopicLocalQueue:
-    @pytest.mark.asyncio
-    async def test_connects_to_sse_endpoint(self):
-        """Should establish connection to SSE API endpoint."""
-        # TODO
+        # When making the mock instance of asyncio.TaskGroup
+        # part of an asynchronous context using AsyncMock,
+        # all its methods become asynchronous as well,
+        # but technically the "create_task" method by itself is synchronous,
+        # thus awaiting create_task gives a warning
+        # (i.e. the context must be awaited, not "create_task" inside it)
+        mock_asyncio_tg_async_context = AsyncMock()
+        mock_asyncio_tg_async_context.create_task = MagicMock()
+        mock_asyncio_tg_class.return_value.__aenter__.return_value = (
+            mock_asyncio_tg_async_context
+        )
 
-    @pytest.mark.asyncio
-    async def test_uses_correct_api_path_from_metadata(self):
-        """Should use path from sse_topics_metadata for the topic."""
-        # TODO
+        metadata = {
+            "t1": {"path": "/stream1", "primary_key": ["id"]},
+            "t2": {"path": "/stream2", "primary_key": ["id"]},
+        }
+        base_paths = {
+            "t1": temp_project_path / "data/queues/t1",
+            "t2": temp_project_path / "data/queues/t2",
+        }
 
-    @pytest.mark.asyncio
-    async def test_sets_user_agent_header(self):
-        """Should set User-Agent header from app_config."""
-        # TODO
+        await TopicQueuesAsyncWriter.write_all_topics_local_queues_async(
+            sample_api_base_url, metadata, temp_project_path, base_paths
+        )
 
-    @pytest.mark.asyncio
-    async def test_reads_events_until_double_newline(self):
-        """Should read stream events separated by double newlines."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_writes_events_to_queue_file(self):
-        """Should write received events to binary queue file."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_creates_new_file_after_time_threshold(self):
-        """Should create new queue file after specified seconds threshold."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_closes_previous_file_before_creating_new_one(self):
-        """Should properly close file before creating new queue file."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_handles_incomplete_read_error(self):
-        """Should handle IncompleteReadError from streaming."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_handles_client_payload_error_with_retry(self):
-        """Should handle ClientPayloadError and attempt reconnection."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_logs_connection_errors(self):
-        """Should log errors when connection drops."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_reconnects_automatically_on_error(self):
-        """Should automatically reconnect after connection error."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_sets_infinite_timeout_for_streaming(self):
-        """Should set timeout to allow long-lived streaming connections."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_runs_indefinitely(self):
-        """Should run in infinite loop to maintain connection."""
-        # TODO
-
-
-class TestWriteAllTopicsLocalQueuesAsync:
-    @pytest.mark.asyncio
-    async def test_creates_writer_instance(self):
-        """Should create TopicQueuesAsyncWriter instance."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_creates_task_for_each_topic(self):
-        """Should create async task for each topic in queues_base_paths."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_uses_task_group_for_concurrent_execution(self):
-        """Should use asyncio.TaskGroup for managing concurrent tasks."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_passes_correct_parameters_to_write_topic_local_queue(self):
-        """Should pass all required parameters to write_topic_local_queue."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_propagates_user_project_path_to_writer(self):
-        """Should pass user_project_path to TopicQueuesAsyncWriter."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_propagates_gui_log_queue_to_writer(self):
-        """Should pass gui_global_log_queue to TopicQueuesAsyncWriter."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_executes_multiple_topics_concurrently(self):
-        """Should run multiple topic queues writers concurrently."""
-        # TODO
-
-
-class TestBuildAndRunTopicQueuesWriter:
-    def test_calls_asyncio_run_with_write_all_topics_async(self):
-        """Should call asyncio.run() with write_all_topics_local_queues_async."""
-        # TODO
-
-    def test_passes_parameters_to_write_all_topics_async(self):
-        """Should pass all parameters to write_all_topics_local_queues_async."""
-        # TODO
-
-    def test_catches_broad_exceptions(self):
-        """Should catch all exceptions during execution."""
-        # TODO
-
-    def test_logs_exception_on_error(self):
-        """Should log exception details when error occurs."""
-        # TODO
-
-    def test_creates_logger_with_user_project_path(self):
-        """Should create logger with user_project_path."""
-        # TODO
-
-    def test_passes_gui_log_queue_to_logger(self):
-        """Should pass gui_global_log_queue to logger."""
-        # TODO
-
-    def test_exits_on_exception(self):
-        """Should call exit() after exception handling."""
-        # TODO
-
-    def test_executes_asyncio_event_loop(self):
-        """Should execute the async function through asyncio.run()."""
-        # TODO
-
-
-class TestTopicQueuesAsyncWriterIntegration:
-    @pytest.mark.asyncio
-    async def test_multiple_topics_write_concurrently(self):
-        """Should handle multiple topics writing simultaneously."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_file_rotation_for_single_topic(self):
-        """Should rotate files properly for single topic."""
-        # TODO
-
-    @pytest.mark.asyncio
-    async def test_file_rotation_for_multiple_topics(self):
-        """Should rotate files properly across multiple topics."""
-        # TODO
-
-    def test_can_be_run_as_separate_process(self):
-        """Should be capable of running as a separate process."""
-        # TODO
-
-    def test_handles_graceful_shutdown(self):
-        """Should handle process termination gracefully."""
-        # TODO
+        # The "create_task" method called is the one from
+        # the made up async context, not the original class one
+        # which is now detached
+        assert mock_asyncio_tg_async_context.create_task.call_count == 2

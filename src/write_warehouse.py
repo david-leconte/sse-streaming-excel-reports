@@ -56,7 +56,7 @@ class WarehouseTransformer:
 
     def __init__(
         self,
-        sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
+        sse_topics_metadata: dict[str, dict[str, str | dict[str, str] | list[str]]],
         user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
         gui_global_log_queue: Queue | None = None,
@@ -109,8 +109,7 @@ class WarehouseTransformer:
             self._user_project_path / "data/warehouse/data_files"
         ).resolve()
 
-        duckdb_conn.sql(
-            f"""
+        duckdb_conn.sql(f"""
             INSTALL ducklake;
             INSTALL sqlite;
             ATTACH 
@@ -123,8 +122,7 @@ class WarehouseTransformer:
                 );
             USE warehouse;
             CREATE SCHEMA IF NOT EXISTS bronze;
-            """
-        )
+            """)
 
         return duckdb_conn
 
@@ -314,11 +312,9 @@ class WarehouseTransformer:
         events_data_str = "[" + ",".join(events_data_str_list) + "]"
 
         if not self._topics_bronze_table_exist[topic]:
-            self._duckdb_conn.sql(
-                f"""
+            self._duckdb_conn.sql(f"""
                 CREATE TABLE IF NOT EXISTS bronze.{topic}_raw (event JSON);
-                """
-            )
+                """)
 
             self._topics_bronze_table_exist[topic] = True
 
@@ -424,7 +420,7 @@ class WarehouseTransformer:
 
     @staticmethod
     def build_and_run_continuously_warehouse_transformer(
-        sse_topics_metadata: dict[str, dict[str, str | dict[str, str]]],
+        sse_topics_metadata: dict[str, dict[str, str | dict[str, str] | list[str]]],
         user_project_path: Path,
         local_queues_base_paths: dict[str, Path],
         gui_global_log_queue: Queue | None = None,
